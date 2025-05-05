@@ -16,6 +16,7 @@ from .ddod import DDOD
 from .ddq_detr import DDQDETR
 from .deformable_detr import DeformableDETR
 from .detr import DETR
+from .dfine import DFINE
 from .dino import DINO
 from .fast_rcnn import FastRCNN
 from .faster_rcnn import FasterRCNN
@@ -73,5 +74,5 @@ __all__ = [
     'MaskFormer', 'DDOD', 'Mask2Former', 'SemiBaseDetector', 'SoftTeacher',
     'RTMDet', 'Detectron2Wrapper', 'CrowdDet', 'CondInst', 'BoxInst',
     'DetectionTransformer', 'ConditionalDETR', 'DINO', 'DABDETR', 'GLIP',
-    'DDQDETR', 'GroundingDINO', 'RTDETR', 'RTDETRV2'
+    'DDQDETR', 'GroundingDINO', 'RTDETR', 'RTDETRV2', 'DFINE'
 ]

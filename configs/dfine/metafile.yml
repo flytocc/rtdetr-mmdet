@@ -1,0 +1,33 @@
+Collections:
+  - Name: D-FINE
+    Metadata:
+      Training Data: COCO
+      Training Techniques:
+        - AdamW
+        - Weight Decay
+        - Multi Scale Train
+        - Gradient Clip
+      Training Resources: 8x A100 GPUs
+      Architecture:
+        - ResNet / HGNetV2
+        - Transformer
+    Paper:
+      URL: https://arxiv.org/abs/2410.13842
+      Title: 'D-FINE: REDEFINE REGRESSION TASK IN DETRS AS FINE-GRAINED DISTRIBUTION REFINEMENT'
+    README: configs/dfine/README.md
+    Code:
+      URL: https://github.com/flytocc/mmdetection/blob/68f05d0f47faa82f00a8ea1dc2e6a15d9d72b29b/mmdet/models/detectors/dfine.py#L12
+      Version: v3.3.0
+
+Models:
+  - Name: dfine_r18vd_8xb2-72e_coco
+    In Collection: RT-DETR
+    Config: configs/dfine/dfine_r18vd_8xb2-72e_coco.py
+    Metadata:
+      Epochs: 72
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 48.3
+    Weights: 
