@@ -19,6 +19,7 @@ from .mask2former_layers import (Mask2FormerTransformerDecoder,
                                  Mask2FormerTransformerDecoderLayer,
                                  Mask2FormerTransformerEncoder)
 from .rtdetr_layers import RTDETRHybridEncoder, RTDETRTransformerDecoder
+from .rtdetrv2_layers import RTDETRTransformerDecoderV2
 from .utils import (MLP, AdaptivePadding, ConditionalAttention, DynamicConv,
                     PatchEmbed, PatchMerging, coordinate_to_encoding,
                     inverse_sigmoid, nchw_to_nlc, nlc_to_nchw)
@@ -39,5 +40,5 @@ __all__ = [
     'Mask2FormerTransformerDecoderLayer', 'Mask2FormerTransformerDecoder',
     'GroundingDinoTransformerDecoderLayer', 'GroundingDinoTransformerEncoder',
     'GroundingDinoTransformerDecoder', 'RTDETRHybridEncoder',
-    'RTDETRTransformerDecoder'
+    'RTDETRTransformerDecoder', 'RTDETRTransformerDecoderV2'
 ]
