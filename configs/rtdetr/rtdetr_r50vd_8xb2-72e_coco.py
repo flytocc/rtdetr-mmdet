@@ -41,7 +41,14 @@ model = dict(
         out_channels=256,
         act_cfg=None,
         norm_cfg=dict(type='BN', requires_grad=True),  # GN for DINO
-        num_outs=3),  # 4 for DINO
+        num_outs=3,  # 4 for DINO
+        init_cfg=dict(
+            type='Kaiming',
+            layer='Conv2d',
+            a=5**0.5,
+            distribution='uniform',
+            mode='fan_in',
+            nonlinearity='leaky_relu')),
     encoder=dict(
         use_encoder_idx=[-1],
         num_encoder_layers=1,

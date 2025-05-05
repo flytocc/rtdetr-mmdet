@@ -1,10 +1,14 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import math
+
 from torch import nn
 
 from mmdet.registry import MODELS
 from mmdet.utils import OptConfigType
 from ..layers import (DFINECdnQueryGenerator, DFINETransformerDecoder,
                       RTDETRHybridEncoder)
+from ..layers.transformer.dfine_layers import (
+    LQE, Gate, MultiNumPointsMultiScaleDeformableAttention)
 from .rtdetr import RTDETR
 
 
@@ -32,3 +36,16 @@ class DFINE(RTDETR):
         self.embed_dims = self.decoder.embed_dims
         self.memory_trans_fc = nn.Linear(self.embed_dims, self.embed_dims)
         self.memory_trans_norm = nn.LayerNorm(self.embed_dims)
+
+    def init_weights(self) -> None:
+        """Initialize weights for Transformer and other components."""
+        super().init_weights()
+        for m in self.modules():
+            if isinstance(m,
+                          (Gate, MultiNumPointsMultiScaleDeformableAttention)):
+                m.init_weights()
+            elif isinstance(m, LQE):
+                for layer in m.reg_conf.layers[:-1]:
+                    nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
+            # elif isinstance(m, nn.MultiheadAttention):
+            #     nn.init.kaiming_uniform_(m.out_proj.weight, a=math.sqrt(5))
