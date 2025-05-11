@@ -2,14 +2,13 @@ _base_ = './rtdetrv2_r50vd_8xb2-72e_coco.py'
 
 pretrained = 'rtdetrv2_r50vd_8xb2-84e_coco.pth'  # TODO
 model = dict(
-    type='RTDETRV2',
-    init_cfg=dict(type='Pretrained', checkpoint=pretrained))
+    type='RTDETRV2', init_cfg=dict(type='Pretrained', checkpoint=pretrained))
 
 # learning policy
 max_epochs = 12
 train_cfg = dict(max_epochs=max_epochs)
 
-stage2_num_epochs = 3
+stage2_num_epochs = 2
 custom_hooks = [
     dict(
         type='EMAHook',

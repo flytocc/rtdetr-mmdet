@@ -1,4 +1,4 @@
-_base_ = '../rtdetr/rtdetr_r50vd_8xb2-72e_coco.py'
+_base_ = '../rtdetrv2/rtdetrv2_r50vd_8xb2-72e_coco.py'
 
 base_dim = 256
 num_points = [3, 6, 3]
@@ -52,10 +52,7 @@ model = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
     dict(type='LoadAnnotations', with_bbox=True),
-    dict(
-        type='RandomApply',
-        transforms=dict(type='PhotoMetricDistortion', hue_delta=12.8),
-        prob=0.5),
+    dict(type='PhotoMetricDistortion', hue_delta=12.75),
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',
@@ -68,19 +65,7 @@ train_pipeline = [
     dict(type='PackDetInputs')
 ]
 
-test_pipeline = [
-    dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
-    dict(type='Resize', scale=(640, 640), keep_ratio=False),
-    dict(type='LoadAnnotations', with_bbox=True),
-    dict(
-        type='PackDetInputs',
-        meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',
-                   'scale_factor'))
-]
-
 train_dataloader = dict(dataset=dict(pipeline=train_pipeline))
-val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
-test_dataloader = val_dataloader
 
 # learning policy
 max_epochs = 132
@@ -96,23 +81,6 @@ param_scheduler = [
         type='LinearLR', start_factor=0.001, by_epoch=False, begin=0, end=1000)
 ]
 
-data_preprocessor_stage2 = dict(
-    type='DetDataPreprocessor',
-    mean=[0, 0, 0],
-    std=[255, 255, 255],
-    bgr_to_rgb=True,
-    pad_size_divisor=1)
-
-train_pipeline_stage2 = [
-    dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
-    dict(type='LoadAnnotations', with_bbox=True),
-    dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(type='RandomFlip', prob=0.5),
-    dict(type='Resize', scale=(640, 640), keep_ratio=False),
-    dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(type='PackDetInputs')
-]
-
 stage2_num_epochs = 12
 custom_hooks = [
     dict(
@@ -125,9 +93,9 @@ custom_hooks = [
     dict(
         type='DataPreprocessorSwitchHook',
         switch_epoch=max_epochs - stage2_num_epochs,
-        switch_data_preprocessor=data_preprocessor_stage2),
+        switch_data_preprocessor=_base_.data_preprocessor_stage2),
     dict(
         type='PipelineSwitchHook',
         switch_epoch=max_epochs - stage2_num_epochs,
-        switch_pipeline=train_pipeline_stage2)
+        switch_pipeline=_base_.train_pipeline_stage2)
 ]

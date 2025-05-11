@@ -15,6 +15,7 @@ from .dab_detr import DABDETR
 from .ddod import DDOD
 from .ddq_detr import DDQDETR
 from .deformable_detr import DeformableDETR
+from .deim import DEIMDFINE, DEIMRTDETR
 from .detr import DETR
 from .dfine import DFINE
 from .dino import DINO
@@ -74,5 +75,6 @@ __all__ = [
     'MaskFormer', 'DDOD', 'Mask2Former', 'SemiBaseDetector', 'SoftTeacher',
     'RTMDet', 'Detectron2Wrapper', 'CrowdDet', 'CondInst', 'BoxInst',
     'DetectionTransformer', 'ConditionalDETR', 'DINO', 'DABDETR', 'GLIP',
-    'DDQDETR', 'GroundingDINO', 'RTDETR', 'RTDETRV2', 'DFINE'
+    'DDQDETR', 'GroundingDINO', 'RTDETR', 'RTDETRV2', 'DFINE', 'DEIMDFINE',
+    'DEIMRTDETR'
 ]

@@ -115,17 +115,13 @@ interpolations = ['nearest', 'bilinear', 'bicubic', 'area', 'lanczos']
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
     dict(type='LoadAnnotations', with_bbox=True),
-    dict(
-        type='RandomApply',
-        transforms=dict(type='PhotoMetricDistortion'),
-        prob=0.8),
+    dict(type='PhotoMetricDistortion', hue_delta=12.75),
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',
         transforms=dict(type='MinIoURandomCrop', cover_all_box=False),
         prob=0.8),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(type='RandomFlip', prob=0.5),
     dict(
         type='RandomChoice',
         transforms=[[
@@ -136,6 +132,7 @@ train_pipeline = [
                 interpolation=interpolation)
         ] for interpolation in interpolations]),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
+    dict(type='RandomFlip', prob=0.5),
     dict(type='PackDetInputs')
 ]
 

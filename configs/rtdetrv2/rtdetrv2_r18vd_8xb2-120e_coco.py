@@ -6,7 +6,7 @@ model = dict(
     backbone=dict(
         depth=18,
         frozen_stages=-1,
-        norm_cfg=dict(type='SyncBN', requires_grad=True),
+        norm_cfg=dict(requires_grad=True),
         norm_eval=False,
         init_cfg=dict(type='Pretrained', checkpoint=pretrained)),
     neck=dict(in_channels=[128, 256, 512]),
@@ -20,7 +20,7 @@ optim_wrapper = dict(paramwise_cfg=dict(custom_keys=dict(_delete_=True)))
 max_epochs = 120
 train_cfg = dict(max_epochs=max_epochs)
 
-stage2_num_epochs = 4
+stage2_num_epochs = 3
 custom_hooks = [
     dict(
         type='EMAHook',

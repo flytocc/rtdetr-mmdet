@@ -30,10 +30,7 @@ model = dict(
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
     dict(type='LoadAnnotations', with_bbox=True),
-    dict(
-        type='RandomApply',
-        transforms=dict(type='PhotoMetricDistortion', hue_delta=12.8),
-        prob=0.5),
+    dict(type='PhotoMetricDistortion', hue_delta=12.75),
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',

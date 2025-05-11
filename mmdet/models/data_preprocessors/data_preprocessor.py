@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from mmengine.dist import barrier, broadcast, get_dist_info
 from mmengine.logging import MessageHub
 from mmengine.model import BaseDataPreprocessor, ImgDataPreprocessor
-from mmengine.structures import PixelData
+from mmengine.structures import InstanceData, PixelData
 from mmengine.utils import is_seq_of
 from torch import Tensor
 
@@ -821,3 +821,65 @@ class BoxInstDataPreprocessor(DetDataPreprocessor):
                     per_im_masks.cpu().numpy(), b_img_h, b_img_w)
                 data_sample.gt_instances.pairwise_masks = pairwise_masks
         return {'inputs': inputs, 'data_samples': data_samples}
+
+
+@MODELS.register_module()
+class BatchMixup(nn.Module):
+    """Applies Mixup augmentation to the batch.
+
+    Args:
+        ratio_range (Sequence[float]): Scale ratio of mixup image.
+            Defaults to (0.45, .55).
+        prob (float): Probability of applying this transformation.
+            Defaults to 1.0.
+    """
+
+    def __init__(self,
+                 ratio_range: Tuple[float, float] = (0.45, 0.55),
+                 prob: float = 1.0) -> None:
+        super().__init__()
+        self.ratio_range = ratio_range
+        self.prob = prob
+
+    def forward(
+        self, inputs: Tensor, data_samples: List[DetDataSample]
+    ) -> Tuple[Tensor, List[DetDataSample]]:
+        if random.uniform(0, 1) > self.prob:
+            return inputs, data_samples
+
+        # Generate mixup ratio
+        beta = round(random.uniform(*self.ratio_range), 6)
+
+        # Mix images
+        inputs = inputs.roll(shifts=1, dims=0).lerp_(inputs, beta)
+
+        # Mixup data_samples
+        if data_samples is not None:
+            shifted_samples = data_samples[-1:] + data_samples[:-1]
+            mixup_data_samples = []
+            for i in range(len(data_samples)):
+                mixup_data_sample = DetDataSample(
+                    metainfo=data_samples[i].metainfo,
+                    gt_instances=InstanceData.cat([
+                        data_samples[i].gt_instances,
+                        shifted_samples[i].gt_instances,
+                    ]),
+                    ignored_instances=InstanceData.cat([
+                        data_samples[i].ignored_instances,
+                        shifted_samples[i].ignored_instances,
+                    ]))
+                if 'proposals' in data_samples:
+                    mixup_data_sample.proposals = InstanceData.cat([
+                        data_samples[i].proposals,
+                        shifted_samples[i].proposals,
+                    ])
+                if 'gt_seg_map' in data_samples:
+                    mixup_data_sample.gt_seg_map = InstanceData.cat([
+                        data_samples[i].gt_seg_map,
+                        shifted_samples[i].gt_seg_map,
+                    ])
+                mixup_data_samples.append(mixup_data_sample)
+
+            data_samples = mixup_data_samples
+
+        return inputs, data_samples

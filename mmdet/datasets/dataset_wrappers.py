@@ -3,11 +3,12 @@ import collections
 import copy
 from typing import List, Sequence, Union
 
+from mmcv.transforms import Compose, RandomApply, RandomChoice
 from mmengine.dataset import BaseDataset
 from mmengine.dataset import ConcatDataset as MMENGINE_ConcatDataset
 from mmengine.dataset import force_full_init
 
-from mmdet.registry import DATASETS, TRANSFORMS
+from mmdet.registry import DATASETS
 
 
 @DATASETS.register_module()
@@ -49,15 +50,7 @@ class MultiImageMixDataset:
             ])
         self._skip_type_keys = skip_type_keys
 
-        self.pipeline = []
-        self.pipeline_types = []
-        for transform in pipeline:
-            if isinstance(transform, dict):
-                self.pipeline_types.append(transform['type'])
-                transform = TRANSFORMS.build(transform)
-                self.pipeline.append(transform)
-            else:
-                raise TypeError('pipeline must be a dict')
+        self.pipeline = Compose(pipeline)
 
         self.dataset: BaseDataset
         if isinstance(dataset, dict):
@@ -115,17 +108,34 @@ class MultiImageMixDataset:
 
     def __getitem__(self, idx):
         results = copy.deepcopy(self.dataset[idx])
-        for (transform, transform_type) in zip(self.pipeline,
-                                               self.pipeline_types):
+        for transform in self.pipeline:
             if self._skip_type_keys is not None and \
-                    transform_type in self._skip_type_keys:
+                    transform.__class__.__name__ in self._skip_type_keys:
                 continue
 
-            if hasattr(transform, 'get_indexes'):
+            def _flatten(t):
+                if isinstance(t, Compose):
+                    for sub_t in t.transforms:
+                        yield from _flatten(sub_t)
+                elif isinstance(t, RandomChoice):
+                    for compose in t.transforms:
+                        yield from _flatten(compose)
+                elif isinstance(t, RandomApply):
+                    yield from _flatten(t.transforms)
+                else:
+                    yield t
+
+            mix_transform = None
+            for t in _flatten(transform):
+                if hasattr(t, 'get_indexes'):
+                    mix_transform = t
+                    break
+
+            if mix_transform is not None:
                 for i in range(self.max_refetch):
                     # Make sure the results passed the loading pipeline
                     # of the original dataset is not None.
-                    indexes = transform.get_indexes(self.dataset)
+                    indexes = mix_transform.get_indexes(self.dataset)
                     if not isinstance(indexes, collections.abc.Sequence):
                         indexes = [indexes]
                     mix_results = [

@@ -13,7 +13,7 @@ from mmengine.utils import to_2tuple
 from torch import Tensor, nn
 
 from mmdet.registry import MODELS
-from mmdet.utils import OptConfigType, OptMultiConfig
+from mmdet.utils import ConfigType, OptConfigType, OptMultiConfig
 
 
 def nlc_to_nchw(x: Tensor, hw_shape: Sequence[int]) -> Tensor:
@@ -743,15 +743,24 @@ class MLP(BaseModule):
         output_dim (int): Feature dim of the output tensor.
         num_layers (int): Number of FFN layers. As the last
             layer of MLP only contains FFN (Linear).
+        act_cfg (dict): Config dict for activation layer.
+            Default: dict(type='ReLU').
     """
 
-    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int,
-                 num_layers: int) -> None:
+    def __init__(
+            self,
+            input_dim: int,
+            hidden_dim: int,
+            output_dim: int,
+            num_layers: int,
+            act_cfg: ConfigType = dict(type='ReLU'),
+    ) -> None:
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
         self.layers = ModuleList(
             Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim]))
+        self.act = build_activation_layer(act_cfg)
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward function of MLP.
@@ -764,7 +773,7 @@ class MLP(BaseModule):
                 (num_queries, bs, output_dim).
         """
         for i, layer in enumerate(self.layers):
-            x = F.relu(layer(x)) if i < self.num_layers - 1 else layer(x)
+            x = self.act(layer(x)) if i < self.num_layers - 1 else layer(x)
         return x
 
 
