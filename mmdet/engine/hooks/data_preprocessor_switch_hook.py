@@ -38,7 +38,6 @@ class DataPreprocessorSwitchHook(Hook):
         self._has_switched = False
 
     def before_train_epoch(self, runner) -> None:
-        """Close mosaic and mixup augmentation and switches to use L1 loss."""
         epoch = runner.epoch
         model = runner.model
         # TODO: refactor after mmengine using model wrapper

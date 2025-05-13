@@ -107,6 +107,10 @@ def main():
         cfg.resume = True
         cfg.load_from = args.resume
 
+    if cfg.pop('use_prefetcher', False):
+        cfg.train_dataloader.prefetcher_data_preprocessor = cfg.model.pop(
+            'data_preprocessor')
+
     # build the runner from config
     if 'runner_type' not in cfg:
         # build the default runner
