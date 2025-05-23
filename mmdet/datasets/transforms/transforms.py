@@ -2791,7 +2791,8 @@ class RandomAffine(BaseTransform):
                  max_shear_degree: float = 2.0,
                  border: Tuple[int, int] = (0, 0),
                  border_val: Tuple[int, int, int] = (114, 114, 114),
-                 bbox_clip_border: bool = True) -> None:
+                 bbox_clip_border: bool = True,
+                 center: Union[Tuple[int, int], None] = (0, 0)) -> None:
         assert 0 <= max_translate_ratio <= 1
         assert scaling_ratio_range[0] <= scaling_ratio_range[1]
         assert scaling_ratio_range[0] > 0
@@ -2802,9 +2803,10 @@ class RandomAffine(BaseTransform):
         self.border = border
         self.border_val = border_val
         self.bbox_clip_border = bbox_clip_border
+        self.center = center
 
     @cache_randomness
-    def _get_random_homography_matrix(self, height, width):
+    def _get_random_homography_matrix(self, height, width, center):
         # Rotation
         rotation_degree = random.uniform(-self.max_rotate_degree,
                                          self.max_rotate_degree)
@@ -2829,8 +2831,16 @@ class RandomAffine(BaseTransform):
                                  self.max_translate_ratio) * height
         translate_matrix = self._get_translation_matrix(trans_x, trans_y)
 
-        warp_matrix = (
-            translate_matrix @ shear_matrix @ rotation_matrix @ scaling_matrix)
+        # Center
+        center_matrix = np.array([
+            [1, 0., center[0]], [0., 1, center[1]], [0., 0., 1.]],
+            dtype=np.float32)
+        center_matrix_inv = np.array([
+            [1, 0., -center[0]], [0., 1, -center[1]], [0., 0., 1.]],
+            dtype=np.float32)
+
+        warp_matrix = (translate_matrix @ center_matrix @ shear_matrix @
+                       rotation_matrix @ scaling_matrix @ center_matrix_inv)
         return warp_matrix
 
     @autocast_box_type()
@@ -2838,8 +2848,11 @@ class RandomAffine(BaseTransform):
         img = results['img']
         height = img.shape[0] + self.border[1] * 2
         width = img.shape[1] + self.border[0] * 2
+        center = self.center
+        if center is None:
+            center = (img.shape[1] / 2, img.shape[0] / 2)
 
-        warp_matrix = self._get_random_homography_matrix(height, width)
+        warp_matrix = self._get_random_homography_matrix(height, width, center)
 
         img = cv2.warpPerspective(
             img,

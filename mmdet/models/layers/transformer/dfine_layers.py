@@ -512,7 +512,8 @@ class MultiNumPointsMultiScaleDeformableAttention(BaseModule):
         num_points_scale = [1 / n for n in num_points for _ in range(n)]
         self.register_buffer(
             'num_points_scale',
-            torch.tensor(num_points_scale, dtype=torch.float32).unsqueeze(-1))
+            torch.tensor(num_points_scale, dtype=torch.float32).unsqueeze(-1),
+            persistent=False)
 
         self.total_num_points = sum(num_points)
         self.num_points = num_points
@@ -811,7 +812,8 @@ class Integral(nn.Module):
         super().__init__()
         self.reg_max = reg_max
         self.register_buffer('project',
-                             weighting_function(self.reg_max, 0.5, reg_scale))
+                             weighting_function(self.reg_max, 0.5, reg_scale),
+                             persistent=False)
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward feature from the regression head to get integral result of
@@ -997,15 +999,14 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                 **kwargs)
 
             if lid == 0:
-                all_layers_outputs_classes.append(cls_branches[0](query))
-
-                tmp = pre_bbox_head(query)
                 reference_points_initial = \
-                    (tmp + unact_reference_points).sigmoid()
-                all_layers_outputs_coords.append(reference_points_initial)
-
+                    (pre_bbox_head(query) + unact_reference_points).sigmoid()
                 reference_points_initial_detach = \
                     reference_points_initial.detach()
+
+                if self.training:
+                    all_layers_outputs_classes.append(cls_branches[0](query))
+                    all_layers_outputs_coords.append(reference_points_initial)
 
             # Refine bounding box corners using FDR,
             # integrating previous layer's corrections
@@ -1132,7 +1133,7 @@ class DFINECdnQueryGenerator(CdnQueryGenerator):
         noisy_bboxes_expand = noisy_bboxes_expand.clamp(min=0.0, max=1.0)
         noisy_bboxes_expand = bbox_xyxy_to_cxcywh(noisy_bboxes_expand)
 
-        noisy_bboxes_expand = noisy_bboxes_expand.abs()  # diff
+        noisy_bboxes_expand = noisy_bboxes_expand.abs()  # TODO: to remove
 
         dn_bbox_query = inverse_sigmoid(noisy_bboxes_expand, eps=1e-3)
         return dn_bbox_query

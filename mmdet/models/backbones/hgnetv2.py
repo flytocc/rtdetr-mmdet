@@ -1,18 +1,12 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import logging
-import os
+import warnings
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from mmengine.dist import get_rank, is_distributed
+from mmengine.model import BaseModule
 
 from mmdet.registry import MODELS
-
-# Constants for initialization
-kaiming_normal_ = nn.init.kaiming_normal_
-zeros_ = nn.init.zeros_
-ones_ = nn.init.ones_
 
 
 class LearnableAffineBlock(nn.Module):
@@ -377,7 +371,7 @@ class FrozenBatchNorm2d(nn.Module):
 
 
 @MODELS.register_module()
-class HGNetV2(nn.Module):
+class HGNetV2(BaseModule):
     """
     HGNetV2
     Args:
@@ -402,7 +396,7 @@ class HGNetV2(nn.Module):
             'url':
             'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B0_stage1.pth'
         },
-        'B1': {
+        'B1': {  # S
             'stem_channels': [3, 24, 32],
             'stage_config': {
                 # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
@@ -414,7 +408,7 @@ class HGNetV2(nn.Module):
             'url':
             'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B1_stage1.pth'
         },
-        'B2': {
+        'B2': {  # M
             'stem_channels': [3, 24, 32],
             'stage_config': {
                 # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
@@ -438,7 +432,7 @@ class HGNetV2(nn.Module):
             'url':
             'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B3_stage1.pth'
         },
-        'B4': {
+        'B4': {  # L
             'stem_channels': [3, 32, 48],
             'stage_config': {
                 # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
@@ -450,7 +444,7 @@ class HGNetV2(nn.Module):
             'url':
             'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B4_stage1.pth'
         },
-        'B5': {
+        'B5': {  # X
             'stem_channels': [3, 32, 64],
             'stage_config': {
                 # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
@@ -462,7 +456,7 @@ class HGNetV2(nn.Module):
             'url':
             'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B5_stage1.pth'
         },
-        'B6': {
+        'B6': {  # H
             'stem_channels': [3, 48, 96],
             'stage_config': {
                 # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
@@ -483,9 +477,17 @@ class HGNetV2(nn.Module):
                  freeze_stem_only=True,
                  freeze_at=0,
                  freeze_norm=True,
-                 pretrained=True,
-                 local_model_dir='weight/hgnetv2/'):
-        super().__init__()
+                 pretrained=None,
+                 init_cfg=None):
+        super(HGNetV2, self).__init__(init_cfg)
+
+        assert not (init_cfg and pretrained), \
+            'init_cfg and pretrained cannot be specified at the same time'
+        if isinstance(pretrained, str):
+            warnings.warn('DeprecationWarning: pretrained is deprecated, '
+                          'please use "init_cfg" instead')
+            self.init_cfg = dict(type='Pretrained', checkpoint=pretrained)
+
         self.use_lab = use_lab
         self.return_idx = return_idx
 
@@ -521,51 +523,6 @@ class HGNetV2(nn.Module):
 
         if freeze_norm:
             self._freeze_norm(self)
-
-        if pretrained:
-            RED, GREEN, RESET = '\033[91m', '\033[92m', '\033[0m'
-            try:
-                model_path = local_model_dir + 'PPHGNetV2_' + name + '_stage1.pth'
-                if os.path.exists(model_path):
-                    state = torch.load(model_path, map_location='cpu')
-                    print(f'Loaded stage1 {name} HGNetV2 from local file.')
-                else:
-                    # If the file doesn't exist locally, download from the URL
-                    if get_rank() == 0:
-                        print(
-                            GREEN +
-                            "If the pretrained HGNetV2 can't be downloaded automatically. Please check your network connection."
-                            + RESET)
-                        print(
-                            GREEN +
-                            'Please check your network connection. Or download the model manually from '
-                            + RESET + f'{download_url}' + GREEN + ' to ' +
-                            RESET + f'{local_model_dir}.' + RESET)
-                        state = torch.hub.load_state_dict_from_url(
-                            download_url,
-                            map_location='cpu',
-                            model_dir=local_model_dir)
-                        if is_distributed():
-                            torch.distributed.barrier()
-                    else:
-                        if is_distributed():
-                            torch.distributed.barrier()
-                        state = torch.load(local_model_dir)
-
-                    print(f'Loaded stage1 {name} HGNetV2 from URL.')
-
-                self.load_state_dict(state)
-
-            except (Exception, KeyboardInterrupt) as e:
-                if get_rank() == 0:
-                    print(f'{str(e)}')
-                    logging.error(
-                        RED +
-                        'CRITICAL WARNING: Failed to load pretrained HGNetV2 model'
-                        + RESET)
-                    logging.error(GREEN + 'Please check your network connection. Or download the model manually from ' \
-                                + RESET + f'{download_url}' + GREEN + ' to ' + RESET + f'{local_model_dir}.' + RESET)
-                exit()
 
     def _freeze_norm(self, m: nn.Module):
         if isinstance(m, nn.BatchNorm2d):
