@@ -1,20 +1,55 @@
-_base_ = '../rtdetrv2/rtdetrv2_r18vd_8xb2-120e_coco.py'
+_base_ = '../dfine/dfine_hgnetv2_n_8xb16-160e_coco.py'
 
 act_cfg = dict(type='SiLU', inplace=True)
 model = dict(
-    type='DEIMRTDETR',
+    type='DEIMDFINE',
     decoder=dict(
-        ref_act_cfg=act_cfg,
-        ref_hidden_dim=256,
-        ref_num_layers=3,
-        layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
+        ref_act_cfg=act_cfg, layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
     bbox_head=dict(
         reg_act_cfg=act_cfg,
         loss_cls=dict(type='DEIMMalLoss', alpha=1.0, gamma=1.5)))
 
+# set all norm layers in backbone to decay_multi=0.0
+# set all other layers in backbone to lr_mult=0.5
+num_blocks_list = (1, 1, 2, 1)
+backbone_norm_multi = dict(decay_mult=0.0)
+custom_keys = {'backbone': dict(lr_mult=0.5)}
+custom_keys.update({
+    f'backbone.stem.{name}.bn': backbone_norm_multi
+    for name in ['stem1', 'stem2a', 'stem2b', 'stem3', 'stem4']
+})
+custom_keys.update({
+    f'backbone.stages.{stage_id}.blocks.{block_id}.layers.{lid}.bn':
+    backbone_norm_multi
+    for stage_id, num_blocks in enumerate((1, 1))
+    for block_id in range(num_blocks)
+    for lid in range(3)
+})
+custom_keys.update({
+    f'backbone.stages.{stage_id}.blocks.{block_id}.layers.{lid}.conv{cid}.bn':
+    backbone_norm_multi
+    for stage_id, num_blocks in enumerate(num_blocks_list[2:], start=2)
+    for block_id in range(num_blocks)
+    for lid in range(3)
+    for cid in (1, 2)
+})
+custom_keys.update({
+    f'backbone.stages.{stage_id}.blocks.{block_id}.aggregation.{lid}.bn':
+    backbone_norm_multi
+    for stage_id, num_blocks in enumerate(num_blocks_list)
+    for block_id in range(num_blocks)
+    for lid in range(2)
+})
+custom_keys.update({
+    f'backbone.stages.{stage_id}.downsample.bn': backbone_norm_multi
+    for stage_id in range(1, 4)
+})
+
 # optimizer
 optim_wrapper = dict(
-    optimizer=dict(lr=0.0002), paramwise_cfg=dict(bias_decay_mult=1.0))
+    optimizer=dict(lr=0.0008),
+    paramwise_cfg=dict(
+        custom_keys=dict(_delete_=True, **custom_keys), bias_decay_mult=1.0))
 
 train_pipeline = [
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
@@ -106,8 +141,8 @@ data_preprocessor_stage4 = dict(
     pad_size_divisor=1)
 
 stage2_switch_epoch = 4
-stage3_switch_epoch = 64
-stage4_switch_epoch = 117
+stage3_switch_epoch = 78
+stage4_switch_epoch = 148
 custom_hooks = [
     dict(
         type='EMAHook',
@@ -144,13 +179,16 @@ custom_hooks = [
 
 param_scheduler = [
     dict(type='QuadraticWarmupLR', by_epoch=False, begin=0, end=2000),
-    dict(
-        type='CosineAnnealingLR',
-        begin=stage3_switch_epoch,
-        end=stage4_switch_epoch,
-        by_epoch=True,
-        eta_min_ratio=0.5,
-        convert_to_iter_based=True),
-    dict(
-        type='ConstantLR', by_epoch=True, factor=1, begin=stage4_switch_epoch)
+    # dict(
+    #     type='CosineAnnealingLR',
+    #     begin=stage3_switch_epoch,
+    #     end=stage4_switch_epoch,
+    #     by_epoch=True,
+    #     eta_min_ratio=0.5,
+    #     convert_to_iter_based=True),
+    # dict(
+    #     type='ConstantLR',
+    #     by_epoch=True,
+    #     factor=1,
+    #     begin=stage4_switch_epoch)
 ]

@@ -1,4 +1,4 @@
-_base_ = './rtdetr_r50vd_8xb2-72e_coco.py'
+_base_ = './rtdetrv2_r50vd_8xb2-72e_coco.py'
 pretrained = 'https://github.com/flytocc/mmdetection/releases/download/model_zoo/resnet34vd_pretrained_f6a72dc5.pth'  # noqa
 
 model = dict(
@@ -12,13 +12,13 @@ model = dict(
     encoder=dict(fpn_cfg=dict(expansion=0.5)),
     decoder=dict(num_layers=4))
 
-# set all norm layers in backbone to lr_mult=0.1 and decay_multi=0.0
-# set all other layers in backbone to lr_mult=0.1
+# set all norm layers in backbone to lr_mult=0.5 and decay_multi=0.0
+# set all other layers in backbone to lr_mult=0.5
 num_blocks_list = (3, 4, 6, 3)  # r34
 downsample_norm_idx_list = (2, 3, 3, 3)  # r34
-backbone_norm_multi = dict(lr_mult=0.1, decay_mult=0.0)
+backbone_norm_multi = dict(lr_mult=0.5, decay_mult=0.0)
 custom_keys = {
-    'backbone': dict(lr_mult=0.1), 'in_proj_bias': dict(decay_mult=0)}
+    'backbone': dict(lr_mult=0.5), 'in_proj_bias': dict(decay_mult=0)}
 custom_keys.update({
     'backbone.stem.1': backbone_norm_multi,
     'backbone.stem.4': backbone_norm_multi,
@@ -39,4 +39,27 @@ custom_keys.update({
 
 # optimizer
 optim_wrapper = dict(
-    paramwise_cfg=dict(custom_keys=dict(_delete_=True, **custom_keys)))
+    paramwise_cfg=dict(
+        custom_keys=dict(_delete_=True, **custom_keys), bias_decay_mult=0))
+
+# learning policy
+max_epochs = 120
+train_cfg = dict(max_epochs=max_epochs)
+
+stage2_num_epochs = 3
+custom_hooks = [
+    dict(
+        type='EMAHook',
+        ema_type='ExpMomentumEMA',
+        momentum=0.0001,
+        update_buffers=True,
+        priority=49),
+    dict(
+        type='DataPreprocessorSwitchHook',
+        switch_epoch=max_epochs - stage2_num_epochs,
+        switch_data_preprocessor=_base_.data_preprocessor_stage2),
+    dict(
+        type='PipelineSwitchHook',
+        switch_epoch=max_epochs - stage2_num_epochs,
+        switch_pipeline=_base_.train_pipeline_stage2)
+]

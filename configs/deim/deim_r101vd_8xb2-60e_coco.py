@@ -1,11 +1,54 @@
-_base_ = '../dfine/dfine_hgnetv2_n_8xb2-160e_coco.py'
+_base_ = '../rtdetrv2/rtdetrv2_r101vd_8xb2-72e_coco.py'
 
+act_cfg = dict(type='SiLU', inplace=True)
 model = dict(
-    type='DEIMDFINE',
-    decoder=dict(ref_act_cfg=dict(type='SiLU')),
+    type='DEIMRTDETR',
+    backbone=dict(
+        frozen_stages=-1,
+        norm_cfg=dict(requires_grad=True),
+        norm_eval=False),
+    decoder=dict(
+        ref_act_cfg=act_cfg,
+        ref_hidden_dim=256,
+        ref_num_layers=3,
+        layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
     bbox_head=dict(
-        reg_act_cfg=dict(type='SiLU'),
+        reg_act_cfg=act_cfg,
         loss_cls=dict(type='DEIMMalLoss', alpha=1.0, gamma=1.5)))
+
+# set all norm layers in backbone to decay_multi=0.0
+# set all other layers in backbone to lr_mult=0.01
+num_blocks_list = (3, 4, 23, 3)  # r101
+downsample_norm_idx_list = (3, 3, 3, 3)  # r101
+backbone_norm_multi = dict(decay_mult=0.0)
+custom_keys = {'backbone': dict(lr_mult=0.01)}
+custom_keys.update({
+    'backbone.stem.1': backbone_norm_multi,
+    'backbone.stem.4': backbone_norm_multi,
+    'backbone.stem.7': backbone_norm_multi,
+})
+custom_keys.update({
+    f'backbone.layer{stage_id + 1}.{block_id}.bn': backbone_norm_multi
+    for stage_id, num_blocks in enumerate(num_blocks_list)
+    for block_id in range(num_blocks)
+})
+custom_keys.update({
+    f'backbone.layer{stage_id + 1}.{block_id}.downsample.{downsample_norm_idx - 1}':  # noqa
+    backbone_norm_multi
+    for stage_id, (num_blocks, downsample_norm_idx) in enumerate(
+        zip(num_blocks_list, downsample_norm_idx_list))
+    for block_id in range(num_blocks)
+})
+
+# optimizer
+optim_wrapper = dict(
+    optimizer=dict(lr=0.0002),
+    paramwise_cfg=dict(
+        custom_keys=dict(_delete_=True, **custom_keys), bias_decay_mult=1.0))
+
+# learning policy
+max_epochs = 60
+train_cfg = dict(max_epochs=max_epochs)
 
 train_pipeline = [
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
@@ -83,12 +126,13 @@ data_preprocessor_stage2 = dict(
     type='DetDataPreprocessor',
     batch_augments=[
         dict(type='BatchMixup', ratio_range=(0.45, 0.55), prob=0.5)
-    ],
+    ] + _base_.model.data_preprocessor.batch_augments,
     mean=[0, 0, 0],
     std=[255, 255, 255],
     bgr_to_rgb=True,
     pad_size_divisor=1)
-data_preprocessor_stage3 = dict(
+data_preprocessor_stage3 = _base_.model.data_preprocessor
+data_preprocessor_stage4 = dict(
     type='DetDataPreprocessor',
     mean=[0, 0, 0],
     std=[255, 255, 255],
@@ -96,8 +140,8 @@ data_preprocessor_stage3 = dict(
     pad_size_divisor=1)
 
 stage2_switch_epoch = 4
-stage3_switch_epoch = 78
-stage4_switch_epoch = 148
+stage3_switch_epoch = 34
+stage4_switch_epoch = 58
 custom_hooks = [
     dict(
         type='EMAHook',
@@ -125,21 +169,22 @@ custom_hooks = [
     dict(
         type='DataPreprocessorSwitchHook',
         switch_epoch=stage3_switch_epoch,
-        switch_data_preprocessor=data_preprocessor_stage3)
+        switch_data_preprocessor=data_preprocessor_stage3),
+    dict(
+        type='DataPreprocessorSwitchHook',
+        switch_epoch=stage4_switch_epoch,
+        switch_data_preprocessor=data_preprocessor_stage4)
 ]
 
 param_scheduler = [
-    dict(type='QuadraticWarmupLR', by_epoch=False, begin=0, end=1000),
-    # dict(
-    #     type='CosineAnnealingLR',
-    #     begin=stage3_switch_epoch,
-    #     end=stage4_switch_epoch,
-    #     by_epoch=True,
-    #     eta_min_ratio=0.5,
-    #     convert_to_iter_based=True),
-    # dict(
-    #     type='ConstantLR',
-    #     by_epoch=True,
-    #     factor=1,
-    #     begin=stage4_switch_epoch)
+    dict(type='QuadraticWarmupLR', by_epoch=False, begin=0, end=2000),
+    dict(
+        type='CosineAnnealingLR',
+        begin=stage3_switch_epoch,
+        end=stage4_switch_epoch,
+        by_epoch=True,
+        eta_min_ratio=0.5,
+        convert_to_iter_based=True),
+    dict(
+        type='ConstantLR', by_epoch=True, factor=1, begin=stage4_switch_epoch)
 ]

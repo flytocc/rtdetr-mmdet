@@ -1,6 +1,6 @@
-_base_ = './rtdetrv2_r50vd_8xb2-72e_coco.py'
+_base_ = './rtdetrv2_r34vd_8xb2-120e_coco.py'
 
-pretrained = 'rtdetrv2_r50vd_8xb2-72e_coco.pth'  # TODO
+pretrained = 'rtdetrv2_r34vd_8xb2-120e_coco.pth'  # TODO
 model = dict(
     type='RTDETRV2', init_cfg=dict(type='Pretrained', checkpoint=pretrained))
 

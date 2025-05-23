@@ -1,20 +1,20 @@
-_base_ = '../rtdetrv2/rtdetrv2_r18vd_8xb2-120e_coco.py'
+_base_ = '../dfine/dfine_hgnetv2_l_8xb4-80e_coco.py'
 
 act_cfg = dict(type='SiLU', inplace=True)
 model = dict(
-    type='DEIMRTDETR',
+    type='DEIMDFINE',
     decoder=dict(
-        ref_act_cfg=act_cfg,
-        ref_hidden_dim=256,
-        ref_num_layers=3,
-        layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
+        ref_act_cfg=act_cfg, layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
     bbox_head=dict(
         reg_act_cfg=act_cfg,
         loss_cls=dict(type='DEIMMalLoss', alpha=1.0, gamma=1.5)))
 
 # optimizer
-optim_wrapper = dict(
-    optimizer=dict(lr=0.0002), paramwise_cfg=dict(bias_decay_mult=1.0))
+optim_wrapper = dict(optimizer=dict(lr=0.0005))
+
+# learning policy
+max_epochs = 58
+train_cfg = dict(max_epochs=max_epochs)
 
 train_pipeline = [
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
@@ -92,7 +92,7 @@ data_preprocessor_stage2 = dict(
     type='DetDataPreprocessor',
     batch_augments=[
         dict(type='BatchMixup', ratio_range=(0.45, 0.55), prob=0.5)
-    ],
+    ] + _base_.model.data_preprocessor.batch_augments,
     mean=[0, 0, 0],
     std=[255, 255, 255],
     bgr_to_rgb=True,
@@ -106,8 +106,8 @@ data_preprocessor_stage4 = dict(
     pad_size_divisor=1)
 
 stage2_switch_epoch = 4
-stage3_switch_epoch = 64
-stage4_switch_epoch = 117
+stage3_switch_epoch = 29
+stage4_switch_epoch = 50
 custom_hooks = [
     dict(
         type='EMAHook',

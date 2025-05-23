@@ -12,5 +12,9 @@ model = dict(
             self_attn_cfg=dict(embed_dims=384),
             ffn_cfg=dict(embed_dims=384, feedforward_channels=2048))))
 
-# set all layers in backbone to lr_mult=0.01
-_base_.optim_wrapper.paramwise_cfg.custom_keys.backbone.lr_mult = 0.01
+# optimizer
+optim_wrapper = dict(
+    paramwise_cfg=dict(
+        custom_keys={'backbone': dict(lr_mult=0.01)},
+        norm_decay_mult=1,
+        bias_decay_mult=1))
