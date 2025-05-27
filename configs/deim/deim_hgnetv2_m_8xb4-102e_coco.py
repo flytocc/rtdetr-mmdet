@@ -85,14 +85,12 @@ train_pipeline_stage2 = [
                     type='Mosaic',
                     img_scale=(320, 320),
                     center_ratio_range=(1.0, 1.0),
-                    bbox_clip_border=False,
                     pad_val=0),
                 dict(
                     type='RandomAffine',
                     scaling_ratio_range=(0.5, 1.5),
                     max_shear_degree=0,
                     border_val=(0, 0, 0),
-                    bbox_clip_border=False,
                     center=None),
                 dict(type='PhotoMetricDistortion', hue_delta=12.75)
             ],

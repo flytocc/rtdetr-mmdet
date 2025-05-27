@@ -151,6 +151,7 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
+    pin_memory=True,
     dataset=dict(
         filter_cfg=dict(filter_empty_gt=False), pipeline=train_pipeline))
 val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
