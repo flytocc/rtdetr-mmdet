@@ -4,6 +4,9 @@ from functools import partial
 from typing import Any, Dict, Generator, Optional, Union
 
 import torch
+from mmcv.transforms import Compose
+from mmdet.engine import PipelineSwitchHook as OriPipelineSwitchHook
+from mmdet.registry import HOOKS
 from mmengine.dataset import worker_init_fn as default_worker_init_fn
 from mmengine.dist import get_rank, get_world_size
 from mmengine.logging import print_log
@@ -114,12 +117,41 @@ class _RepeatSampler(object):
             yield from iter(self.sampler)
 
 
+@HOOKS.register_module(force=True)
+class PipelineSwitchHook(OriPipelineSwitchHook):
+
+    def before_train_epoch(self, runner):
+        """switch pipeline."""
+        epoch = runner.epoch
+        train_loader = runner.train_dataloader
+        if isinstance(train_loader, PrefetchLoader):
+            train_loader = train_loader.loader
+        if epoch >= self.switch_epoch and not self._has_switched:
+            runner.logger.info('Switch pipeline now!')
+            # The dataset pipeline cannot be updated when
+            # persistent_workers is True, so we need to force
+            # the dataloader's multi-process restart.
+            # This is a very hacky approach.
+            train_loader.dataset.pipeline = Compose(self.switch_pipeline)
+            if hasattr(train_loader, 'persistent_workers'
+                    ) and train_loader.persistent_workers is True:
+                train_loader._DataLoader__initialized = False
+                train_loader._iterator = None
+                self._restart_dataloader = True
+            if isinstance(train_loader, MultiEpochsDataLoader):
+                train_loader.iterator = super(
+                    MultiEpochsDataLoader, train_loader).__iter__()
+            self._has_switched = True
+        else:
+            # Once the restart is complete, we need to restore
+            # the initialization flag.
+            if self._restart_dataloader:
+                train_loader._DataLoader__initialized = True
+
+
 try:
-    from mmcv.transforms import Compose
-    from mmdet.engine import (
-        DataPreprocessorSwitchHook as OriDataPreprocessorSwitchHook,
-        PipelineSwitchHook as OriPipelineSwitchHook)
-    from mmdet.registry import HOOKS
+    from mmdet.engine import \
+        DataPreprocessorSwitchHook as OriDataPreprocessorSwitchHook
     from mmengine.model import BaseDataPreprocessor, is_model_wrapper
 
     @HOOKS.register_module(force=True)
@@ -140,38 +172,6 @@ try:
                 model.data_preprocessor = self.switch_data_preprocessor.to(
                     model.data_preprocessor.device)
                 self._has_switched = True
-
-
-    @HOOKS.register_module(force=True)
-    class PipelineSwitchHook(OriPipelineSwitchHook):
-
-        def before_train_epoch(self, runner):
-            """switch pipeline."""
-            epoch = runner.epoch
-            train_loader = runner.train_dataloader
-            if isinstance(train_loader, PrefetchLoader):
-                train_loader = train_loader.loader
-            if epoch >= self.switch_epoch and not self._has_switched:
-                runner.logger.info('Switch pipeline now!')
-                # The dataset pipeline cannot be updated when
-                # persistent_workers is True, so we need to force
-                # the dataloader's multi-process restart.
-                # This is a very hacky approach.
-                train_loader.dataset.pipeline = Compose(self.switch_pipeline)
-                if hasattr(train_loader, 'persistent_workers'
-                        ) and train_loader.persistent_workers is True:
-                    train_loader._DataLoader__initialized = False
-                    train_loader._iterator = None
-                    self._restart_dataloader = True
-                if isinstance(train_loader, MultiEpochsDataLoader):
-                    train_loader.iterator = super(
-                        MultiEpochsDataLoader, train_loader).__iter__()
-                self._has_switched = True
-            else:
-                # Once the restart is complete, we need to restore
-                # the initialization flag.
-                if self._restart_dataloader:
-                    train_loader._DataLoader__initialized = True
 
 except:
     pass
