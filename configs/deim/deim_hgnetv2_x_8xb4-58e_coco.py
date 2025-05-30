@@ -33,7 +33,9 @@ train_pipeline_stage2 = [
                 dict(
                     type='RandomApply',
                     transforms=dict(
-                        type='MinIoURandomCrop', cover_all_box=False),
+                        type='MinIoURandomCrop',
+                        cover_all_box=False,
+                        trials=40),
                     prob=0.8),
                 dict(
                     type='FilterAnnotations',
@@ -65,7 +67,8 @@ train_pipeline_stage3 = [
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',
-        transforms=dict(type='MinIoURandomCrop', cover_all_box=False),
+        transforms=dict(
+            type='MinIoURandomCrop', cover_all_box=False, trials=40),
         prob=0.8),
     *train_pipeline,
 ]

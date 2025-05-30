@@ -119,7 +119,8 @@ train_pipeline = [
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',
-        transforms=dict(type='MinIoURandomCrop', cover_all_box=False),
+        transforms=dict(
+            type='MinIoURandomCrop', cover_all_box=False, trials=40),
         prob=0.8),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
     dict(
@@ -151,6 +152,8 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
+    batch_sampler=None,
+    drop_last=True ,
     pin_memory=True,
     dataset=dict(
         filter_cfg=dict(filter_empty_gt=False), pipeline=train_pipeline))

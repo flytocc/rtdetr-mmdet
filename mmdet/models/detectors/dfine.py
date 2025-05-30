@@ -47,5 +47,4 @@ class DFINE(RTDETR):
             elif isinstance(m, LQE):
                 for layer in m.reg_conf.layers[:-1]:
                     nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
-            # elif isinstance(m, nn.MultiheadAttention):
-            #     nn.init.kaiming_uniform_(m.out_proj.weight, a=math.sqrt(5))
+                m.init_weights()

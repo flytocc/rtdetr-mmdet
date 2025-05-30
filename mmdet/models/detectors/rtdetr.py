@@ -1,4 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import math
+
 from functools import lru_cache
 from typing import Dict, Optional, Tuple
 
@@ -64,9 +66,13 @@ class RTDETR(DINO):
         for p in self.decoder.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+        nn.init.kaiming_uniform_(
+            self.decoder.ref_point_head.layers[-1].weight, a=math.sqrt(5))
         for m in self.modules():
             if isinstance(m, MultiScaleDeformableAttention):
                 m.init_weights()
+            elif isinstance(m, nn.MultiheadAttention):
+                nn.init.kaiming_uniform_(m.out_proj.weight, a=math.sqrt(5))
         nn.init.xavier_uniform_(self.memory_trans_fc.weight)
 
     def pre_transformer(

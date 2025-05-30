@@ -1372,19 +1372,22 @@ class MinIoURandomCrop(BaseTransform):
             the border of the image. Defaults to True.
         cover_all_box (bool, optional): ensure all bboxes are covered in
             the final crop.
+        trials (int, optional): Number of trials to find a crop for a given
+            value of minimal IoU (Jaccard) overlap. Default, 40.
     """
 
     def __init__(self,
                  min_ious: Sequence[float] = (0.1, 0.3, 0.5, 0.7, 0.9),
                  min_crop_size: float = 0.3,
                  bbox_clip_border: bool = True,
-                 cover_all_box: bool = True) -> None:
-
+                 cover_all_box: bool = True,
+                 trials: int = 50) -> None:
         self.min_ious = min_ious
         self.sample_mode = (1, *min_ious, 0)
         self.min_crop_size = min_crop_size
         self.bbox_clip_border = bbox_clip_border
         self.cover_all_box = cover_all_box
+        self.trials = trials
 
     @cache_randomness
     def _random_mode(self) -> Number:
@@ -1414,7 +1417,7 @@ class MinIoURandomCrop(BaseTransform):
                 return results
 
             min_iou = self.mode
-            for i in range(50):
+            for i in range(self.trials):
                 new_w = random.uniform(self.min_crop_size * w, w)
                 new_h = random.uniform(self.min_crop_size * h, h)
 
