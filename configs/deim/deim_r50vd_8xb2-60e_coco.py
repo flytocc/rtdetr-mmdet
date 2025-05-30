@@ -145,7 +145,6 @@ custom_hooks = [
         type='EMAHook',
         ema_type='ExpMomentumEMA',
         momentum=0.0001,
-        gamma=1000,
         update_buffers=True,
         priority=49),
     dict(

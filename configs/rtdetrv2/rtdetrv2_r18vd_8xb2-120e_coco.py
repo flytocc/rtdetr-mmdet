@@ -15,7 +15,7 @@ model = dict(
 
 # optimizer
 optim_wrapper = dict(
-    paramwise_cfg=dict(custom_keys=dict(_delete_=True), bias_decay_mult=1))
+    paramwise_cfg=dict(custom_keys=dict(_delete_=True), bias_decay_mult=1.0))
 
 # learning policy
 max_epochs = 120
