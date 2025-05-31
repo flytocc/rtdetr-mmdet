@@ -5,9 +5,20 @@ import warnings
 from collections import defaultdict
 from typing import List, Optional, Union
 
-import pycocotools
-from pycocotools.coco import COCO as _COCO
-from pycocotools.cocoeval import COCOeval as _COCOeval
+try:
+    pycocotools = None
+    import faster_coco_eval.core.mask as _maskUtils
+    from faster_coco_eval.core.coco import COCO as _COCO
+    from faster_coco_eval.core.faster_eval_api import COCOeval as _COCOeval
+except ImportError:
+    import pycocotools
+    import pycocotools.mask as _maskUtils
+    from pycocotools.coco import COCO as _COCO
+    from pycocotools.cocoeval import COCOeval as _COCOeval
+
+# just for the ease of import
+COCOeval = _COCOeval
+maskUtils = _maskUtils
 
 
 class COCO(_COCO):
@@ -18,7 +29,8 @@ class COCO(_COCO):
     """
 
     def __init__(self, annotation_file=None):
-        if getattr(pycocotools, '__version__', '0') >= '12.0.2':
+        if (pycocotools is not None
+                and getattr(pycocotools, '__version__', '0') >= '12.0.2'):
             warnings.warn(
                 'mmpycocotools is deprecated. Please install official pycocotools by "pip install pycocotools"',  # noqa: E501
                 UserWarning)
@@ -43,10 +55,6 @@ class COCO(_COCO):
 
     def load_imgs(self, ids):
         return self.loadImgs(ids)
-
-
-# just for the ease of import
-COCOeval = _COCOeval
 
 
 class COCOPanoptic(COCO):

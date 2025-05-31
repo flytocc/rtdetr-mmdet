@@ -2,9 +2,8 @@
 import os.path as osp
 from typing import List
 
-from pycocotools.coco import COCO
-
 from mmdet.registry import DATASETS
+from .api_wrappers import COCO
 from .base_det_dataset import BaseDetDataset
 
 

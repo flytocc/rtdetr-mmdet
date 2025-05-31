@@ -6,9 +6,9 @@ from typing import List, Optional
 
 from mmengine.evaluator import BaseMetric
 from mmengine.utils import track_iter_progress
-from pycocotools.coco import COCO
 
 from mmdet.registry import METRICS
+from ...datasets.api_wrappers import COCO
 
 try:
     from pycocoevalcap.eval import COCOEvalCap

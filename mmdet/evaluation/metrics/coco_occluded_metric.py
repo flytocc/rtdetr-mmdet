@@ -5,10 +5,10 @@ import mmengine
 import numpy as np
 from mmengine.fileio import load
 from mmengine.logging import print_log
-from pycocotools import mask as coco_mask
 from terminaltables import AsciiTable
 
 from mmdet.registry import METRICS
+from ...datasets.api_wrappers import maskUtils
 from .coco_metric import CocoMetric
 
 
@@ -107,7 +107,7 @@ class CocoOccludedSeparatedMetric(CocoMetric):
 
             for bbox, score, label, mask in zip(dt['bboxes'], dt['scores'],
                                                 dt['labels'], dt['masks']):
-                cur_binary_mask = coco_mask.decode(mask)
+                cur_binary_mask = maskUtils.decode(mask)
                 dict_det[cur_img_name].append([
                     score, self.dataset_meta['classes'][label],
                     cur_binary_mask, bbox
@@ -171,7 +171,7 @@ class CocoOccludedSeparatedMetric(CocoMetric):
                     cur_gt_bbox[1] + cur_gt_bbox[3]
                 ]
             cur_gt_class = cur_item[1]
-            cur_gt_mask = coco_mask.decode(cur_item[4])
+            cur_gt_mask = maskUtils.decode(cur_item[4])
 
             assert cur_img_name in result_dict.keys()
             cur_detections = result_dict[cur_img_name]

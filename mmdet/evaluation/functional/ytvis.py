@@ -31,7 +31,8 @@ import time
 from collections import defaultdict
 
 import numpy as np
-from pycocotools import mask as maskUtils
+
+from ...datasets.api_wrappers import maskUtils
 
 PYTHON_VERSION = sys.version_info[0]
 
