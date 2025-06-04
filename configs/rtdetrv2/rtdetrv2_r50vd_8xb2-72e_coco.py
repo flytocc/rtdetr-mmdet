@@ -2,11 +2,11 @@ _base_ = '../rtdetr/rtdetr_r50vd_8xb2-72e_coco.py'
 
 model = dict(backbone=dict(frozen_stages=1))
 
-# set all norm layers in backbone to decay_multi=0.0
+# set all norm layers in backbone to decay_mult=1.0
 # set all other layers in backbone to lr_mult=0.1
 num_blocks_list = (3, 4, 6, 3)  # r50
 downsample_norm_idx_list = (3, 3, 3, 3)  # r50
-backbone_norm_multi = dict(decay_mult=0.0)
+backbone_norm_multi = dict(decay_mult=1.0)
 custom_keys = {'backbone': dict(lr_mult=0.1)}
 custom_keys.update({
     'backbone.stem.1': backbone_norm_multi,

@@ -12,11 +12,11 @@ model = dict(
             self_attn_cfg=dict(embed_dims=384),
             ffn_cfg=dict(embed_dims=384, feedforward_channels=2048))))
 
-# set all norm layers in backbone to decay_multi=0.0
+# set all norm layers in backbone to decay_mult=1.0
 # set all other layers in backbone to lr_mult=0.01
 num_blocks_list = (3, 4, 23, 3)  # r101
 downsample_norm_idx_list = (3, 3, 3, 3)  # r101
-backbone_norm_multi = dict(decay_mult=0.0)
+backbone_norm_multi = dict(decay_mult=1.0)
 custom_keys = {'backbone': dict(lr_mult=0.01)}
 custom_keys.update({
     'backbone.stem.1': backbone_norm_multi,

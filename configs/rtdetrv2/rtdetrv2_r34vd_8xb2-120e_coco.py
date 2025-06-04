@@ -12,7 +12,7 @@ model = dict(
     encoder=dict(fpn_cfg=dict(expansion=0.5)),
     decoder=dict(num_layers=4))
 
-# set all norm layers in backbone to lr_mult=0.5 and decay_multi=0.0
+# set all norm layers in backbone to lr_mult=0.5 and decay_mult=0.0
 # set all other layers in backbone to lr_mult=0.5
 num_blocks_list = (3, 4, 6, 3)  # r34
 downsample_norm_idx_list = (2, 3, 3, 3)  # r34

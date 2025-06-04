@@ -18,10 +18,10 @@ model = dict(
     encoder=dict(fpn_cfg=dict(num_csp_blocks=1, expansion=0.5)),
     decoder=dict(num_layers=3))
 
-# set all norm layers in backbone to lr_mult=0.5 and decay_multi=0.0
+# set all norm layers in backbone to lr_mult=0.5 and decay_mult=0.0
 # set all other layers in backbone to lr_mult=0.5
 num_blocks_list = (1, 1, 2, 1)
-backbone_norm_multi = dict(lr_mult=0.5, decay_mult=0.0)
+backbone_norm_multi = dict(lr_mult=0.5, decay_mult=1.0)  # NOTE decay_mult=0 ?
 custom_keys = {
     'backbone': dict(lr_mult=0.5), 'in_proj_bias': dict(decay_mult=0)}
 custom_keys.update({

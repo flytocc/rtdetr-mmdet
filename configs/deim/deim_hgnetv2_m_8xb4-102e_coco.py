@@ -9,7 +9,7 @@ model = dict(
         reg_act_cfg=act_cfg,
         loss_cls=dict(type='DEIMMalLoss', alpha=1.0, gamma=1.5)))
 
-# set all norm layers in backbone to decay_multi=0.0
+# set all norm layers in backbone to decay_mult=0.0
 # set all other layers in backbone to lr_mult=0.1
 num_blocks_list = (1, 1, 3, 1)
 backbone_norm_multi = dict(decay_mult=0.0)
