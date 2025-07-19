@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 from mmcv.cnn import Linear
 from mmengine.structures import InstanceData
+from scipy.optimize import linear_sum_assignment
 from torch import Tensor, nn
 
 from mmdet.models.losses.utils import weighted_loss
@@ -131,70 +132,77 @@ class DFINEHead(RTDETRHead):
                 all_layers_denoising_bbox_preds,
                 all_layers_denoising_bbox_corners)
 
-    @torch.no_grad
-    def _get_targets_over_all_layers(
+    @torch.no_grad()
+    def _get_match_indices(
             self, all_layers_matching_cls_scores: List[Tensor],
             all_layers_matching_bbox_preds: List[Tensor],
             batch_gt_instances: InstanceList,
             batch_img_metas: List[dict]) -> List[List[AssignResult]]:
-        num_layers = len(all_layers_matching_cls_scores)
-        num_imgs = len(all_layers_matching_cls_scores[0])
+        """Get matching indices for all decoder layers."""
+        num_imgs, num_queries, _ = all_layers_matching_cls_scores[0].shape
+        gt_instances = InstanceData.cat(batch_gt_instances)
+        num_target_list = list(map(len, batch_gt_instances))
 
-        assign_result_layers = []
-        for lid in range(num_layers):
-            batch_assign_result = []
-            for bid in range(num_imgs):
-                assign_result = self._get_assign_result_single(
-                    all_layers_matching_cls_scores[lid][bid],
-                    all_layers_matching_bbox_preds[lid][bid],
-                    batch_gt_instances[bid], batch_img_metas[bid])
-                batch_assign_result.append(assign_result)
-            assign_result_layers.append(batch_assign_result)
+        img_shapes = {
+            tuple(img_meta['img_shape'])
+            for img_meta in batch_img_metas
+        }
+        assert len(img_shapes) == 1, \
+            f'All images must have the same shape, but got {img_shapes}.'
 
-        return assign_result_layers
+        img_meta = batch_img_metas[0]
 
-    def _get_assign_result_single(self, cls_score: Tensor, bbox_pred: Tensor,
-                                  gt_instances: InstanceData,
-                                  img_meta: dict) -> AssignResult:
         img_h, img_w = img_meta['img_shape']
-        factor = bbox_pred.new_tensor([img_w, img_h, img_w,
-                                       img_h]).unsqueeze(0)
-        # convert bbox_pred from xywh, normalized to xyxy, unnormalized
-        bbox_pred = bbox_cxcywh_to_xyxy(bbox_pred)
-        bbox_pred = bbox_pred * factor
+        factor = all_layers_matching_bbox_preds[0].new_tensor(
+            [img_w, img_h, img_w, img_h]).unsqueeze(0)
 
-        pred_instances = InstanceData(scores=cls_score, bboxes=bbox_pred)
-        # assigner and sampler
-        assign_result = self.assigner.assign(
-            pred_instances=pred_instances,
-            gt_instances=gt_instances,
-            img_meta=img_meta)
-        return assign_result
+        all_layers_match_indices = []
+        for cls_score, bbox_pred in zip(all_layers_matching_cls_scores,
+                                        all_layers_matching_bbox_preds):
+            if cls_score is None or bbox_pred is None:
+                all_layers_match_indices.append(None)
+                continue
 
-    @torch.no_grad
-    def _get_merged_assign_results(
-        self, *all_layers_assign_results: List[List[AssignResult]]
+            # batched calculate is more efficient
+            cls_score = cls_score.flatten(0, 1)
+            bbox_pred = bbox_pred.flatten(0, 1)
+
+            # convert bbox_pred from xywh, normalized to xyxy, unnormalized
+            bbox_pred = bbox_cxcywh_to_xyxy(bbox_pred)
+            bbox_pred = bbox_pred * factor
+
+            pred_instances = InstanceData(scores=cls_score, bboxes=bbox_pred)
+
+            total_cost = None
+            for match_cost in self.assigner.match_costs:
+                cost = match_cost(
+                    pred_instances=pred_instances,
+                    gt_instances=gt_instances,
+                    img_meta=img_meta)
+                total_cost = cost if total_cost is None else cost + total_cost
+            total_cost = total_cost.view(num_imgs, num_queries, -1)
+
+            batch_match_indices = []
+            for bid, cost in enumerate(total_cost.split(num_target_list, -1)):
+                row, col = linear_sum_assignment(cost[bid].cpu())
+                batch_match_indices.append(
+                    (torch.from_numpy(row).to(torch.long),
+                     torch.from_numpy(col).to(torch.long)))
+
+            all_layers_match_indices.append(batch_match_indices)
+
+        return all_layers_match_indices
+
+    @torch.no_grad()
+    def _get_merged_match_indices(
+        self, *all_match_indices: List[List[AssignResult]]
     ) -> List[Tuple[Tensor, Tensor]]:
         """Get a matching union set across all decoder layers."""
         results = []
-        for assign_results in zip(*all_layers_assign_results):
-            all_indices = []
-            for assign_result in assign_results:
-                pos_inds = torch.nonzero(
-                    assign_result.gt_inds > 0,
-                    as_tuple=False).squeeze(-1).unique()
-                pos_assigned_gt_inds = assign_result.gt_inds[pos_inds] - 1
-
-                indices = torch.stack([pos_inds, pos_assigned_gt_inds], dim=-1)
-                all_indices.append(indices)
-
-            if not all_indices:
-                results.append((torch.empty(0, dtype=torch.long),
-                                torch.empty(0, dtype=torch.long)))
-                continue
-
-            all_indices = torch.cat(all_indices, dim=0)
-            unique_pairs, counts = all_indices.cpu().unique(
+        for all_indices in zip(*all_match_indices):
+            all_indices = torch.cat(
+                [torch.stack(inds, dim=-1) for inds in all_indices], dim=0)
+            unique_pairs, counts = all_indices.unique(
                 return_counts=True, dim=0)
             sorted_indices = counts.argsort(descending=True)
             unique_pairs = unique_pairs[sorted_indices]
@@ -272,15 +280,12 @@ class DFINEHead(RTDETRHead):
              all_layers_cls_scores, all_layers_bbox_preds,
              all_layers_bbox_corners, dn_meta)
 
-        all_layers_assign_results = self._get_targets_over_all_layers(
-            all_layers_matching_cls_scores,
-            all_layers_matching_bbox_preds,
-            batch_gt_instances=batch_gt_instances,
-            batch_img_metas=batch_img_metas)
-        enc_assign_results = self._get_targets_over_all_layers(
-            (enc_cls_scores, ), (enc_bbox_preds, ),
-            batch_gt_instances=batch_gt_instances,
-            batch_img_metas=batch_img_metas)[0]
+        (*all_layers_match_indices,
+         enc_match_indices) = self._get_match_indices(
+             (*all_layers_matching_cls_scores, enc_cls_scores),
+             (*all_layers_matching_bbox_preds, enc_bbox_preds),
+             batch_gt_instances=batch_gt_instances,
+             batch_img_metas=batch_img_metas)
 
         (initial_dn_cls_scores,
          *all_layers_denoising_cls_scores) = all_layers_denoising_cls_scores
@@ -290,18 +295,27 @@ class DFINEHead(RTDETRHead):
          *all_layers_matching_cls_scores) = all_layers_matching_cls_scores
         (initial_bbox_preds,
          *all_layers_matching_bbox_preds) = all_layers_matching_bbox_preds
-        (initial_assign_results,
-         *all_layers_assign_results) = all_layers_assign_results
+        (initial_match_indices,
+         *all_layers_match_indices) = all_layers_match_indices
 
-        merged_assign_results = self._get_merged_assign_results(
-            all_layers_assign_results[-1],
-            *all_layers_assign_results[:-1],  # TODO
-            initial_assign_results,
-            enc_assign_results)
+        # `_get_merged_match_indices` performs sorting，
+        # be aware that the input order may influence training behavior.
+        all_match_indices = (all_layers_match_indices[-1],
+                             *all_layers_match_indices[:-1],
+                             initial_match_indices)
+        if enc_match_indices is not None:
+            all_match_indices = (*all_match_indices, enc_match_indices)
+        merged_match_indices = self._get_merged_match_indices(
+            *all_match_indices)
+
+        device = all_layers_matching_cls_scores[-1].device
+        merged_match_indices = [(pos.to(device), gt.to(device))
+                                for pos, gt in merged_match_indices]
 
         teacher_scores = all_layers_matching_cls_scores[-1].detach()
         teacher_corners = all_layers_matching_bbox_corners[-1].detach()
-        all_layers_teachers = ((teacher_scores, teacher_corners), ) * (
+        teacher = (teacher_scores, teacher_corners)
+        all_layers_teachers = (teacher, ) * (
             len(all_layers_matching_bbox_corners) - 1) + (None, )
 
         self.num_pos, self.num_neg = None, None
@@ -312,9 +326,9 @@ class DFINEHead(RTDETRHead):
              all_layers_matching_bbox_preds,
              all_layers_matching_bbox_corners,
              all_layers_teachers,
-             all_layers_assign_results,
+             all_layers_match_indices,
              initial_bbox_preds=initial_bbox_preds.detach(),
-             merged_assign_results=merged_assign_results,
+             merged_match_indices=merged_match_indices,
              batch_gt_instances=batch_gt_instances,
              batch_img_metas=batch_img_metas)
 
@@ -343,9 +357,9 @@ class DFINEHead(RTDETRHead):
                 initial_cls_scores, initial_bbox_preds,
                 bbox_corners=None,
                 teacher=None,
-                batch_assign_results=initial_assign_results,
+                batch_match_indices=initial_match_indices,
                 initial_bbox_preds=None,
-                merged_assign_results=merged_assign_results,
+                merged_match_indices=merged_match_indices,
                 batch_gt_instances=batch_gt_instances,
                 batch_img_metas=batch_img_metas)
         loss_dict['init_loss_cls'] = initial_loss_cls
@@ -361,9 +375,9 @@ class DFINEHead(RTDETRHead):
                     enc_cls_scores, enc_bbox_preds,
                     bbox_corners=None,
                     teacher=None,
-                    batch_assign_results=enc_assign_results,
+                    batch_match_indices=enc_match_indices,
                     initial_bbox_preds=None,
-                    merged_assign_results=merged_assign_results,
+                    merged_match_indices=merged_match_indices,
                     batch_gt_instances=batch_gt_instances,
                     batch_img_metas=batch_img_metas)
             loss_dict['enc_loss_cls'] = enc_loss_cls
@@ -426,9 +440,10 @@ class DFINEHead(RTDETRHead):
     def loss_by_feat_single(self, cls_scores: Tensor, bbox_preds: Tensor,
                             bbox_corners: Optional[Tensor],
                             teacher: Optional[Tuple[Tensor, Tensor]],
-                            batch_assign_results: Optional[List[AssignResult]],
+                            batch_match_indices: Optional[List[Tuple[Tensor,
+                                                                     Tensor]]],
                             initial_bbox_preds: Optional[Tensor],
-                            merged_assign_results: List[Tuple[Tensor, Tensor]],
+                            merged_match_indices: List[Tuple[Tensor, Tensor]],
                             batch_gt_instances: InstanceList,
                             batch_img_metas: List[dict]) -> Tuple[Tensor]:
         """Loss function for outputs from a single decoder layer of a single
@@ -444,11 +459,11 @@ class DFINEHead(RTDETRHead):
                 # TODO
             teacher (tuple[Tensor, Tensor]):
                 # TODO
-            batch_assign_results (list[AssignResult]):
+            batch_match_indices (list[tuple[Tensor, Tensor]]):
                 # TODO
             initial_bbox_preds (Tensor):
                 # TODO
-            merged_assign_results (list[tuple[Tensor, Tensor]]):
+            merged_match_indices (list[tuple[Tensor, Tensor]]):
                 # TODO
             batch_gt_instances (list[:obj:`InstanceData`]): Batch of
                 gt_instance. It usually includes ``bboxes`` and ``labels``
@@ -466,7 +481,7 @@ class DFINEHead(RTDETRHead):
         (labels_list, label_weights_list, bbox_targets_list,
          bbox_weights_list, pos_inds_list, neg_inds_list) = multi_apply(
              self._get_targets_single, cls_scores_list, bbox_preds_list,
-             batch_assign_results, batch_gt_instances, batch_img_metas)
+             batch_match_indices, batch_gt_instances, batch_img_metas)
         num_total_pos = sum((inds.numel() for inds in pos_inds_list))
         num_total_neg = sum((inds.numel() for inds in neg_inds_list))
         labels = torch.cat(labels_list, 0)
@@ -507,7 +522,7 @@ class DFINEHead(RTDETRHead):
         (bbox_targets_list, bbox_weights_list,
          bbox_pos_inds_list) = multi_apply(self._get_dfine_targets_single,
                                            bbox_preds_list,
-                                           merged_assign_results,
+                                           merged_match_indices,
                                            batch_gt_instances, batch_img_metas)
         num_total_bbox_pos = sum((inds.numel() for inds in bbox_pos_inds_list))
         bbox_targets = torch.cat(bbox_targets_list, 0)
@@ -606,9 +621,9 @@ class DFINEHead(RTDETRHead):
 
         return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
 
-    @torch.no_grad
+    @torch.no_grad()
     def _get_targets_single(self, cls_score: Tensor, bbox_pred: Tensor,
-                            assign_result: AssignResult,
+                            match_indices: Tuple[Tensor, Tensor],
                             gt_instances: InstanceData,
                             img_meta: dict) -> tuple:
         """Compute regression and classification targets for one image.
@@ -621,7 +636,7 @@ class DFINEHead(RTDETRHead):
             bbox_pred (Tensor): Sigmoid outputs from a single decoder layer
                 for one image, with normalized coordinate (cx, cy, w, h) and
                 shape [num_queries, 4].
-            assign_result (AssignResult):
+            match_indices (tuple[Tensor, Tensor]):
                 # TODO
             gt_instances (:obj:`InstanceData`): Ground truth of instance
                 annotations. It should includes ``bboxes`` and ``labels``
@@ -644,7 +659,7 @@ class DFINEHead(RTDETRHead):
         num_bboxes = bbox_pred.size(0)
 
         # assigner and sampler
-        if assign_result is None:
+        if match_indices is None:
             # convert bbox_pred from xywh, normalized to xyxy, unnormalized
             bbox_pred = bbox_cxcywh_to_xyxy(bbox_pred)
             bbox_pred = bbox_pred * factor
@@ -655,13 +670,15 @@ class DFINEHead(RTDETRHead):
                 gt_instances=gt_instances,
                 img_meta=img_meta)
 
+            pos_inds = torch.nonzero(
+                assign_result.gt_inds > 0,
+                as_tuple=False).squeeze(-1).unique()
+            pos_assigned_gt_inds = assign_result.gt_inds[pos_inds] - 1
+        else:
+            pos_inds, pos_assigned_gt_inds = match_indices
+
         gt_bboxes = gt_instances.bboxes
         gt_labels = gt_instances.labels
-        pos_inds = torch.nonzero(
-            assign_result.gt_inds > 0, as_tuple=False).squeeze(-1).unique()
-        neg_inds = torch.nonzero(
-            assign_result.gt_inds == 0, as_tuple=False).squeeze(-1).unique()
-        pos_assigned_gt_inds = assign_result.gt_inds[pos_inds] - 1
         pos_gt_bboxes = gt_bboxes[pos_assigned_gt_inds.long(), :]
 
         # label targets
@@ -676,6 +693,9 @@ class DFINEHead(RTDETRHead):
         bbox_weights = torch.zeros_like(bbox_pred, dtype=gt_bboxes.dtype)
         bbox_weights[pos_inds] = 1.0
 
+        neg_inds = torch.nonzero(
+            bbox_weights.sum(-1) == 0, as_tuple=False).squeeze(-1).unique()
+
         # DETR regress the relative position of boxes (cxcywh) in the image.
         # Thus the learning target should be normalized by the image size, also
         # the box format should be converted from defaultly x1y1x2y2 to cxcywh.
@@ -685,9 +705,9 @@ class DFINEHead(RTDETRHead):
         return (labels, label_weights, bbox_targets, bbox_weights, pos_inds,
                 neg_inds)
 
-    @torch.no_grad
+    @torch.no_grad()
     def _get_dfine_targets_single(self, bbox_pred: Tensor,
-                                  merged_assign_result: Tuple[Tensor, Tensor],
+                                  match_indices: Tuple[Tensor, Tensor],
                                   gt_instances: InstanceData,
                                   img_meta: dict) -> tuple:
         """Compute regression and classification targets for one image.
@@ -698,7 +718,7 @@ class DFINEHead(RTDETRHead):
             bbox_pred (Tensor): Sigmoid outputs from a single decoder layer
                 for one image, with normalized coordinate (cx, cy, w, h) and
                 shape [num_queries, 4].
-            merged_assign_result (tuple[Tensor, Tensor]):
+            match_indices (tuple[Tensor, Tensor]):
                 # TODO
             gt_instances (:obj:`InstanceData`): Ground truth of instance
                 annotations. It should includes ``bboxes`` and ``labels``
@@ -718,7 +738,7 @@ class DFINEHead(RTDETRHead):
         gt_bboxes = gt_instances.bboxes
 
         # bbox targets
-        bbox_pos_inds, pos_assigned_gt_inds = merged_assign_result
+        bbox_pos_inds, pos_assigned_gt_inds = match_indices
         pos_gt_bboxes = gt_bboxes[pos_assigned_gt_inds.long(), :]
 
         bbox_targets = torch.zeros_like(bbox_pred, dtype=gt_bboxes.dtype)
