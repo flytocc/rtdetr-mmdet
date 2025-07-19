@@ -308,7 +308,7 @@ class DINOHead(DeformableDETRHead):
             bbox_preds, bbox_targets, bbox_weights, avg_factor=num_total_pos)
         return loss_cls, loss_bbox, loss_iou
 
-    @torch.no_grad
+    @torch.no_grad()
     def get_dn_targets(self, batch_gt_instances: InstanceList,
                        batch_img_metas: dict, dn_meta: Dict[str,
                                                             int]) -> tuple:

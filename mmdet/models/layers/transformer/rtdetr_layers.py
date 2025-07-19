@@ -664,7 +664,7 @@ class RTDETRTransformerDecoder(DinoTransformerDecoder):
 
         eval_idx = kwargs.pop('eval_idx', -1)
         if eval_idx < 0:
-            eval_idx = eval_idx + len(self.layers)
+            eval_idx = eval_idx + self.num_layers
             assert eval_idx >= 0
 
         all_layers_outputs_classes = []
@@ -692,7 +692,7 @@ class RTDETRTransformerDecoder(DinoTransformerDecoder):
                 all_layers_outputs_coords.append(
                     (tmp + unact_reference_points).sigmoid())
 
-                if not self.training or lid == len(self.layers) - 1:
+                if not self.training or lid == self.num_layers - 1:
                     break
 
             unact_reference_points = tmp + unact_reference_points.detach()

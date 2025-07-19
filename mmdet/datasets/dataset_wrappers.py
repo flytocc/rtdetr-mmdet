@@ -118,8 +118,8 @@ class MultiImageMixDataset:
                     for sub_t in t.transforms:
                         yield from _flatten(sub_t)
                 elif isinstance(t, RandomChoice):
-                    for compose in t.transforms:
-                        yield from _flatten(compose)
+                    for sub_c in t.transforms:
+                        yield from _flatten(sub_c)
                 elif isinstance(t, RandomApply):
                     yield from _flatten(t.transforms)
                 else:

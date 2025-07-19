@@ -344,7 +344,7 @@ class DETRHead(BaseModule):
             bbox_preds, bbox_targets, bbox_weights, avg_factor=num_total_pos)
         return loss_cls, loss_bbox, loss_iou
 
-    @torch.no_grad
+    @torch.no_grad()
     def get_targets(self, cls_scores_list: List[Tensor],
                     bbox_preds_list: List[Tensor],
                     batch_gt_instances: InstanceList,

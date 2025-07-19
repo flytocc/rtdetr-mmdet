@@ -307,6 +307,7 @@ def translate_gt(gt, reg_max, reg_scale, up):
     return indices, weight_right, weight_left
 
 
+@torch.no_grad()
 def bbox2distance(points, bbox, reg_max, reg_scale, up, eps=0.1):
     """Converts bounding box coordinates to distances from a reference point.
 
@@ -812,8 +813,7 @@ class Integral(nn.Module):
         super().__init__()
         self.reg_max = reg_max
         self.register_buffer('project',
-                             weighting_function(self.reg_max, 0.5, reg_scale),
-                             persistent=False)
+                             weighting_function(self.reg_max, 0.5, reg_scale))
 
     def forward(self, x: Tensor) -> Tensor:
         """Forward feature from the regression head to get integral result of
@@ -870,18 +870,13 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
 
             scaled_dim = int(round(self.layer_scale * self.embed_dims))
             if scaled_dim != self.embed_dims:
-
-                def set_embed_dims(key: str) -> Optional[dict]:
+                for key in {'self_attn_cfg', 'cross_attn_cfg', 'ffn_cfg'}:
                     if key not in wide_layer_cfg:
                         import inspect
                         parameters = inspect.signature(
                             DFINETransformerDecoderLayer.__init__).parameters
                         wide_layer_cfg[key] = deepcopy(parameters[key].default)
                     wide_layer_cfg[key]['embed_dims'] = scaled_dim
-
-                set_embed_dims('self_attn_cfg')
-                set_embed_dims('cross_attn_cfg')
-                set_embed_dims('ffn_cfg')
 
             self.layers.extend([
                 DFINETransformerDecoderLayer(**wide_layer_cfg)
@@ -954,12 +949,14 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
         assert self.return_intermediate
         assert reg_branches is not None
         assert reference_points.shape[-1] == 4
+        # To avoid inverse_sigmoid, remove .sigmoid() in pre_decoder
+        # So reference_points is unactivated reference_points
         unact_reference_points = reference_points
         reference_points = unact_reference_points.sigmoid()
 
         eval_idx = kwargs.pop('eval_idx', -1)
         if eval_idx < 0:
-            eval_idx = eval_idx + len(self.layers)
+            eval_idx = eval_idx + self.num_layers
             assert eval_idx >= 0
         assert eval_idx == self.eval_idx
 
@@ -970,8 +967,8 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
         query_detach = 0
         pred_corners_undetach = 0
 
-        assert len(cls_branches) == len(self.layers) + 1
-        assert len(reg_branches) == len(self.layers) + 2
+        assert len(cls_branches) == self.num_layers + 1
+        assert len(reg_branches) == self.num_layers + 2
         pre_bbox_head = reg_branches[-1]
 
         for lid, layer in enumerate(self.layers):
@@ -1028,7 +1025,7 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                 all_layers_outputs_coords.append(new_reference_points_clamp)
                 all_layers_outputs_corners.append(pred_corners)
 
-                if not self.training or lid == len(self.layers) - 1:
+                if not self.training or lid == self.num_layers - 1:
                     break
 
             query_detach = query.detach()

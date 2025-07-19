@@ -1,6 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import math
-
 from functools import lru_cache
 from typing import Dict, Optional, Tuple
 
@@ -240,6 +239,7 @@ class RTDETR(DINO):
         else:
             reference_points = topk_coords_unact
             dn_mask, dn_meta = None, None
+        # NOTE To avoid inverse_sigmoid in decoder
         # reference_points = reference_points.sigmoid()
 
         decoder_inputs_dict = dict(
@@ -281,10 +281,11 @@ class RTDETR(DINO):
 
     @staticmethod
     @lru_cache
-    def gen_proposals(spatial_shapes: Tuple[Tuple[int, int]],
-                      batch_size: int = 1,
-                      device: Optional[str] = None,
-                      dtype: torch.dtype = torch.float32) -> Tuple[Tensor, Tensor]:
+    def gen_proposals(
+            spatial_shapes: Tuple[Tuple[int, int]],
+            batch_size: int = 1,
+            device: Optional[str] = None,
+            dtype: torch.dtype = torch.float32) -> Tuple[Tensor, Tensor]:
         proposals = []
         for lvl, HW in enumerate(spatial_shapes):
             H, W = HW
