@@ -512,7 +512,6 @@ class DFINEHead(RTDETRHead):
         num_total_bbox_pos = sum((inds.numel() for inds in bbox_pos_inds_list))
         bbox_targets = torch.cat(bbox_targets_list, 0)
         bbox_weights = torch.cat(bbox_weights_list, 0)
-        bbox_pos_inds = torch.cat(bbox_pos_inds_list, 0)
 
         # Compute the average number of gt boxes across all gpus, for
         # normalization purposes
@@ -547,6 +546,9 @@ class DFINEHead(RTDETRHead):
 
         if bbox_corners is None:
             return loss_cls, loss_bbox, loss_iou
+
+        bbox_pos_inds = torch.nonzero(
+            bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
 
         # distribution focal loss
         initial_bbox_preds = initial_bbox_preds.reshape(-1, 4)
