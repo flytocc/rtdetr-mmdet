@@ -10,6 +10,16 @@ from .rtdetr import RTDETR
 
 
 class DEIMMixin:
+    r"""Implementation of `DEIM: DETR with Improved Matching for Fast
+    Convergence' <https://arxiv.org/abs/2412.04234>`_
+    
+    Code is modified from the `official github repo
+    <https://github.com/ShihuaHuang95/DEIM>`_.
+
+    Args:
+        bbox_head (:obj:`ConfigDict` or dict, optional): Config of bbox head.
+            Defaults to `None`.
+    """
 
     def __init__(self,
                  *args,

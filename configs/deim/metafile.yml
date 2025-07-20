@@ -1,0 +1,141 @@
+Collections:
+  - Name: DEIM
+    Metadata:
+      Training Data: COCO
+      Training Techniques:
+        - AdamW
+        - Weight Decay
+        - Multi Scale Train
+        - Gradient Clip
+      Training Resources: 8x A100 GPUs
+      Architecture:
+        - ResNet / HGNetV2
+        - Transformer
+    Paper:
+      URL: https://arxiv.org/abs/2410.13842
+      Title: 'DEIM: DETR with Improved Matching for Fast Convergence'
+    README: configs/deim/README.md
+    Code:
+      URL: https://github.com/flytocc/rtdetr-mmdet/blob/5f2aa027ebe85d750cf746f7c1c1598b996c5d17/mmdet/models/detectors/deim.py#L12
+      Version: v3.3.0
+
+Models:
+  - Name: deim_hgnetv2_n_8xb16-160e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_hgnetv2_n_8xb16-160e_coco.py
+    Metadata:
+      Epochs: 160
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 43.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_n_8xb16-160e_coco-3059c466.pth
+
+  - Name: deim_hgnetv2_s_8xb4-132e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_hgnetv2_s_8xb4-132e_coco.py
+    Metadata:
+      Epochs: 132
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 48.9
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_s_8xb4-132e_coco-4636f228.pth
+
+  - Name: deim_hgnetv2_m_8xb4-102e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_hgnetv2_m_8xb4-102e_coco.py
+    Metadata:
+      Epochs: 102
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 52.6
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_m_8xb4-102e_coco-dbabaa17.pth
+
+  - Name: deim_hgnetv2_l_8xb4-58e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_hgnetv2_l_8xb4-58e_coco.py
+    Metadata:
+      Epochs: 58
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 54.7
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_l_8xb4-58e_coco-3e610e77.pth
+
+  - Name: deim_hgnetv2_x_8xb4-58e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_hgnetv2_x_8xb4-58e_coco.py
+    Metadata:
+      Epochs: 58
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 56.4
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_x_8xb4-58e_coco-d0f10c82.pth
+
+  - Name: deim_r18vd_8xb2-120e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_r18vd_8xb2-120e_coco.py
+    Metadata:
+      Epochs: 120
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 49.1
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r18vd_8xb2-120e_coco-ea4e4b74.pth
+
+  - Name: deim_r34vd_8xb2-120e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_r34vd_8xb2-120e_coco.py
+    Metadata:
+      Epochs: 120
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 51.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r34vd_8xb2-120e_coco-bbfde84a.pth
+
+  - Name: deim_r50vd_8xb2-60e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_r50vd_8xb2-60e_coco.py
+    Metadata:
+      Epochs: 60
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 54.3
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r50vd_8xb2-60e_coco-e9b359d3.pth
+
+  - Name: deim_r50vd_m_8xb2-60e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_r50vd_m_8xb2-60e_coco.py
+    Metadata:
+      Epochs: 60
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 53.2
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r50vd_m_8xb2-60e_coco-c6f9b0b2.pth
+
+  - Name: deim_r101vd_8xb2-60e_coco
+    In Collection: DEIM
+    Config: configs/deim/deim_r101vd_8xb2-60e_coco.py
+    Metadata:
+      Epochs: 60
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 55.5
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r101vd_8xb2-60e_coco-bc315c3d.pth

@@ -9,25 +9,73 @@ Collections:
         - Gradient Clip
       Training Resources: 8x A100 GPUs
       Architecture:
-        - ResNet / HGNetV2
+        - HGNetV2
         - Transformer
     Paper:
       URL: https://arxiv.org/abs/2410.13842
       Title: 'D-FINE: REDEFINE REGRESSION TASK IN DETRS AS FINE-GRAINED DISTRIBUTION REFINEMENT'
     README: configs/dfine/README.md
     Code:
-      URL: https://github.com/flytocc/mmdetection/blob/68f05d0f47faa82f00a8ea1dc2e6a15d9d72b29b/mmdet/models/detectors/dfine.py#L12
+      URL: https://github.com/flytocc/rtdetr-mmdet/blob/5f2aa027ebe85d750cf746f7c1c1598b996c5d17/mmdet/models/detectors/dfine.py#L16
       Version: v3.3.0
 
 Models:
-  - Name: dfine_r18vd_8xb2-72e_coco
-    In Collection: RT-DETR
-    Config: configs/dfine/dfine_r18vd_8xb2-72e_coco.py
+  - Name: dfine_hgnetv2_n_8xb16-160e_coco
+    In Collection: D-FINE
+    Config: configs/dfine/dfine_hgnetv2_n_8xb16-160e_coco.py
     Metadata:
-      Epochs: 72
+      Epochs: 160
     Results:
       - Task: Object Detection
         Dataset: COCO
         Metrics:
-          box AP: 48.3
-    Weights: 
+          box AP: 42.8
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_n_8xb16-160e_coco-28670255.pth
+
+  - Name: dfine_hgnetv2_s_8xb4-132e_coco
+    In Collection: D-FINE
+    Config: configs/dfine/dfine_hgnetv2_s_8xb4-132e_coco.py
+    Metadata:
+      Epochs: 132
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 48.6
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_s_8xb4-132e_coco-92a02f6b.pth
+
+  - Name: dfine_hgnetv2_m_8xb4-132e_coco
+    In Collection: D-FINE
+    Config: configs/dfine/dfine_hgnetv2_m_8xb4-132e_coco.py
+    Metadata:
+      Epochs: 132
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 52.3
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_m_8xb4-132e_coco-4e1ed82e.pth
+
+  - Name: dfine_hgnetv2_l_8xb4-80e_coco
+    In Collection: D-FINE
+    Config: configs/dfine/dfine_hgnetv2_l_8xb4-80e_coco.py
+    Metadata:
+      Epochs: 80
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 54.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_l_8xb4-80e_coco-d95a9b4d.pth
+
+  - Name: dfine_hgnetv2_x_8xb4-80e_coco
+    In Collection: D-FINE
+    Config: configs/dfine/dfine_hgnetv2_x_8xb4-80e_coco.py
+    Metadata:
+      Epochs: 80
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 55.8
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_x_8xb4-80e_coco-68297f9.pth
