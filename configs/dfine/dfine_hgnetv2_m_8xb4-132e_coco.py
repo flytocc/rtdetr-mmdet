@@ -62,9 +62,9 @@ train_pipeline = [
             type='MinIoURandomCrop', cover_all_box=False, trials=40),
         prob=0.8),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(type='RandomFlip', prob=0.5),
     dict(type='Resize', scale=(640, 640), keep_ratio=False),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
+    dict(type='RandomFlip', prob=0.5),
     dict(type='PackDetInputs')
 ]
 
