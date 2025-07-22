@@ -1,23 +1,23 @@
 import copy
 import logging
 from functools import partial
-from typing import Any, Dict, Generator, Optional, Union
+from typing import Any, Dict, Generator, Mapping, Optional, Sequence, Union
 
 import torch
 from mmcv.transforms import Compose
-from mmdet.engine import PipelineSwitchHook as OriPipelineSwitchHook
-from mmdet.registry import HOOKS
 from mmengine.dataset import worker_init_fn as default_worker_init_fn
 from mmengine.dist import get_rank, get_world_size
 from mmengine.logging import print_log
-from mmengine.registry import DATA_SAMPLERS, DATASETS, FUNCTIONS, MODELS
+from mmengine.registry import DATA_SAMPLERS, DATASETS, FUNCTIONS
 from mmengine.runner.runner import _SlicedDataset
 from mmengine.runner.utils import _get_batch_size
 from mmengine.structures import BaseDataElement
 from mmengine.utils import digit_version
 from mmengine.utils.dl_utils import TORCH_VERSION
-from torch import nn
 from torch.utils.data import DataLoader
+
+from mmdet.engine import PipelineSwitchHook as OriPipelineSwitchHook
+from mmdet.registry import HOOKS
 
 CastData = Union[tuple, dict, BaseDataElement, torch.Tensor, list, bytes, str,
                  None]
@@ -27,36 +27,44 @@ class PrefetchLoader:
 
     def __init__(self,
                  loader: DataLoader,
-                 data_preprocessor: Optional[Union[dict, nn.Module]] = None):
+                 non_blocking: Optional[bool] = False) -> None:
         assert torch.cuda.is_available()
         self.loader = loader
+        self.device = torch.device('cuda')
+        self._non_blocking = non_blocking
 
-        if data_preprocessor is None:
-            data_preprocessor = dict(type='BaseDataPreprocessor')
-        if isinstance(data_preprocessor, nn.Module):
-            self.data_preprocessor = data_preprocessor
-        elif isinstance(data_preprocessor, dict):
-            self.data_preprocessor = MODELS.build(data_preprocessor)
+    def cast_data(self, data: CastData) -> CastData:
+        """Copying data to the target device.
+
+        Args:
+            data (dict): Data returned by ``DataLoader``.
+
+        Returns:
+            CollatedResult: Inputs and data sample at target device.
+        """
+        if isinstance(data, Mapping):
+            return {key: self.cast_data(data[key]) for key in data}
+        elif isinstance(data, (str, bytes)) or data is None:
+            return data
+        elif isinstance(data, tuple) and hasattr(data, '_fields'):
+            # namedtuple
+            return type(data)(*(self.cast_data(sample) for sample in data))  # type: ignore  # noqa: E501  # yapf:disable
+        elif isinstance(data, Sequence):
+            return type(data)(self.cast_data(sample) for sample in data)  # type: ignore  # noqa: E501  # yapf:disable
+        elif isinstance(data, (torch.Tensor, BaseDataElement)):
+            return data.to(self.device, non_blocking=self._non_blocking)
         else:
-            raise TypeError('data_preprocessor should be a `dict` or '
-                            f'`nn.Module` instance, but got '
-                            f'{type(data_preprocessor)}')
-
-        self.data_preprocessor = self.data_preprocessor.to(
-            torch.device('cuda'))
+            return data
 
     def __iter__(self) -> Generator[CastData, Any, None]:
         first = True
         stream = torch.cuda.Stream()
-        stream_context = partial(torch.cuda.stream, stream=stream)
+        stream_context = torch.cuda.stream(stream)
 
         for next_data in self.loader:
 
-            with stream_context():
-                _non_blocking = self.data_preprocessor._non_blocking
-                self.data_preprocessor._non_blocking = True
-                next_data = self.data_preprocessor(next_data)
-                self.data_preprocessor._non_blocking = _non_blocking
+            with stream_context:
+                next_data = self.cast_data(next_data)
 
             if not first:
                 yield data  # noqa
@@ -134,13 +142,13 @@ class PipelineSwitchHook(OriPipelineSwitchHook):
             # This is a very hacky approach.
             train_loader.dataset.pipeline = Compose(self.switch_pipeline)
             if hasattr(train_loader, 'persistent_workers'
-                    ) and train_loader.persistent_workers is True:
+                       ) and train_loader.persistent_workers is True:
                 train_loader._DataLoader__initialized = False
                 train_loader._iterator = None
                 self._restart_dataloader = True
             if isinstance(train_loader, MultiEpochsDataLoader):
-                train_loader.iterator = super(
-                    MultiEpochsDataLoader, train_loader).__iter__()
+                train_loader.iterator = super(MultiEpochsDataLoader,
+                                              train_loader).__iter__()
             self._has_switched = True
         else:
             # Once the restart is complete, we need to restore
@@ -150,9 +158,10 @@ class PipelineSwitchHook(OriPipelineSwitchHook):
 
 
 try:
+    from mmengine.model import is_model_wrapper
+
     from mmdet.engine import \
         DataPreprocessorSwitchHook as OriDataPreprocessorSwitchHook
-    from mmengine.model import BaseDataPreprocessor, is_model_wrapper
 
     @HOOKS.register_module(force=True)
     class DataPreprocessorSwitchHook(OriDataPreprocessorSwitchHook):
@@ -163,17 +172,13 @@ try:
             # TODO: refactor after mmengine using model wrapper
             if is_model_wrapper(model):
                 model = model.module
-            if isinstance(runner.train_dataloader, PrefetchLoader):
-                assert isinstance(
-                    model.data_preprocessor, BaseDataPreprocessor)
-                model = runner.train_dataloader
             if epoch >= self.switch_epoch and not self._has_switched:
                 runner.logger.info('Switch data_preprocessor now!')
                 model.data_preprocessor = self.switch_data_preprocessor.to(
                     model.data_preprocessor.device)
                 self._has_switched = True
 
-except:
+except ImportError:
     pass
 
 
@@ -323,8 +328,7 @@ def build_dataloader(dataloader: Union[DataLoader, Dict],
             'collate_fn should be a dict or callable object, but got '
             f'{collate_fn_cfg}')
 
-    prefetcher_data_preprocessor = dataloader_cfg.pop(
-        'prefetcher_data_preprocessor', None)
+    use_prefetcher = dataloader_cfg.pop('use_prefetcher', False)
     use_multi_epochs_loader = dataloader_cfg.pop('use_multi_epochs_loader',
                                                  False)
     loader_class = MultiEpochsDataLoader \
@@ -337,6 +341,6 @@ def build_dataloader(dataloader: Union[DataLoader, Dict],
         collate_fn=collate_fn,
         worker_init_fn=init_fn,
         **dataloader_cfg)
-    if prefetcher_data_preprocessor is not None:
-        data_loader = PrefetchLoader(data_loader, prefetcher_data_preprocessor)
+    if use_prefetcher:
+        data_loader = PrefetchLoader(data_loader)
     return data_loader
