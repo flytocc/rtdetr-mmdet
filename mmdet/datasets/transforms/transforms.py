@@ -1114,11 +1114,15 @@ class PhotoMetricDistortion(BaseTransform):
                  brightness_delta: int = 32,
                  contrast_range: Sequence[Number] = (0.5, 1.5),
                  saturation_range: Sequence[Number] = (0.5, 1.5),
-                 hue_delta: int = 18) -> None:
+                 hue_delta: int = 18,
+                 clip_val: int = -1,
+                 force_float32: bool = True) -> None:
         self.brightness_delta = brightness_delta
         self.contrast_lower, self.contrast_upper = contrast_range
         self.saturation_lower, self.saturation_upper = saturation_range
         self.hue_delta = hue_delta
+        self.clip_val = clip_val
+        self.force_float32 = force_float32
 
     @cache_randomness
     def _random_flags(self) -> Sequence[Number]:
@@ -1151,6 +1155,7 @@ class PhotoMetricDistortion(BaseTransform):
         """
         assert 'img' in results, '`img` is not found in results'
         img = results['img']
+        ori_dtype = img.dtype
         img = img.astype(np.float32)
 
         (mode, brightness_flag, contrast_flag, saturation_flag, hue_flag,
@@ -1160,12 +1165,16 @@ class PhotoMetricDistortion(BaseTransform):
         # random brightness
         if brightness_flag:
             img += delta_value
+            if self.clip_val > 0:
+                img = img.clip(0, self.clip_val)
 
         # mode == 0 --> do random contrast first
         # mode == 1 --> do random contrast last
         if mode == 1:
             if contrast_flag:
                 img *= alpha_value
+                if self.clip_val > 0:
+                    img = img.clip(0, self.clip_val)
 
         # convert color from BGR to HSV
         img = mmcv.bgr2hsv(img)
@@ -1191,6 +1200,11 @@ class PhotoMetricDistortion(BaseTransform):
         if mode == 0:
             if contrast_flag:
                 img *= alpha_value
+                if self.clip_val > 0:
+                    img = img.clip(0, self.clip_val)
+
+        if not self.force_float32:
+            img = img.astype(ori_dtype, copy=False)
 
         # randomly swap channels
         if swap_flag:
@@ -2787,15 +2801,17 @@ class RandomAffine(BaseTransform):
             need to clip the gt bboxes in these cases. Defaults to True.
     """
 
-    def __init__(self,
-                 max_rotate_degree: float = 10.0,
-                 max_translate_ratio: float = 0.1,
-                 scaling_ratio_range: Tuple[float, float] = (0.5, 1.5),
-                 max_shear_degree: float = 2.0,
-                 border: Tuple[int, int] = (0, 0),
-                 border_val: Tuple[int, int, int] = (114, 114, 114),
-                 bbox_clip_border: bool = True,
-                 center: Union[Tuple[int, int], None] = (0, 0)) -> None:
+    def __init__(
+        self,
+        max_rotate_degree: float = 10.0,
+        max_translate_ratio: float = 0.1,
+        scaling_ratio_range: Tuple[float, float] = (0.5, 1.5),
+        max_shear_degree: float = 2.0,
+        border: Tuple[int, int] = (0, 0),
+        border_val: Tuple[int, int, int] = (114, 114, 114),
+        bbox_clip_border: bool = True,
+        center: Union[Tuple[int, int], None] = (0, 0)
+    ) -> None:
         assert 0 <= max_translate_ratio <= 1
         assert scaling_ratio_range[0] <= scaling_ratio_range[1]
         assert scaling_ratio_range[0] > 0
@@ -2835,15 +2851,16 @@ class RandomAffine(BaseTransform):
         translate_matrix = self._get_translation_matrix(trans_x, trans_y)
 
         # Center
-        center_matrix = np.array([
-            [1, 0., center[0]], [0., 1, center[1]], [0., 0., 1.]],
+        center_matrix = np.array(
+            [[1, 0., center[0]], [0., 1, center[1]], [0., 0., 1.]],
             dtype=np.float32)
-        center_matrix_inv = np.array([
-            [1, 0., -center[0]], [0., 1, -center[1]], [0., 0., 1.]],
+        center_matrix_inv = np.array(
+            [[1, 0., -center[0]], [0., 1, -center[1]], [0., 0., 1.]],
             dtype=np.float32)
 
-        warp_matrix = (translate_matrix @ center_matrix @ shear_matrix @
-                       rotation_matrix @ scaling_matrix @ center_matrix_inv)
+        warp_matrix = (
+            translate_matrix @ center_matrix @ shear_matrix @ rotation_matrix
+            @ scaling_matrix @ center_matrix_inv)
         return warp_matrix
 
     @autocast_box_type()

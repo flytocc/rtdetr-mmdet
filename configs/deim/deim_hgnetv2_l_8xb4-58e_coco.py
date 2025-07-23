@@ -28,7 +28,11 @@ train_pipeline_stage2 = [
         type='RandomChoice',
         transforms=[
             [
-                dict(type='PhotoMetricDistortion', hue_delta=12.75),
+                dict(
+                    type='PhotoMetricDistortion',
+                    hue_delta=12.75,
+                    clip_val=255,
+                    force_float32=False),
                 dict(type='Expand', mean=[0, 0, 0]),
                 dict(
                     type='RandomApply',
@@ -55,7 +59,11 @@ train_pipeline_stage2 = [
                     max_shear_degree=0,
                     border_val=(0, 0, 0),
                     center=None),
-                dict(type='PhotoMetricDistortion', hue_delta=12.75)
+                dict(
+                    type='PhotoMetricDistortion',
+                    hue_delta=12.75,
+                    clip_val=255,
+                    force_float32=False)
             ],
         ]),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
@@ -63,7 +71,11 @@ train_pipeline_stage2 = [
     dict(type='PackDetInputs')
 ]
 train_pipeline_stage3 = [
-    dict(type='PhotoMetricDistortion', hue_delta=12.75),
+    dict(
+        type='PhotoMetricDistortion',
+        hue_delta=12.75,
+        clip_val=255,
+        force_float32=False),
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',
@@ -87,7 +99,8 @@ train_dataloader = dict(
                 dict(type='LoadAnnotations', with_bbox=True),
             ],
         },
-        pipeline=train_pipeline))
+        pipeline=train_pipeline,
+        deepcopy=False))
 
 data_preprocessor_stage2 = dict(
     type='DetDataPreprocessor',

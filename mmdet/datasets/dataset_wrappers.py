@@ -1,9 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import collections
 import copy
-from typing import List, Sequence, Union
+from collections.abc import Iterable
+from typing import Callable, List, Sequence, Union
 
-from mmcv.transforms import Compose, RandomApply, RandomChoice
+from mmcv.transforms import BaseTransform, Compose, RandomApply, RandomChoice
 from mmengine.dataset import BaseDataset
 from mmengine.dataset import ConcatDataset as MMENGINE_ConcatDataset
 from mmengine.dataset import force_full_init
@@ -41,7 +42,8 @@ class MultiImageMixDataset:
                  pipeline: Sequence[str],
                  skip_type_keys: Union[Sequence[str], None] = None,
                  max_refetch: int = 15,
-                 lazy_init: bool = False) -> None:
+                 lazy_init: bool = False,
+                 deepcopy: bool = True) -> None:
         assert isinstance(pipeline, collections.abc.Sequence)
         if skip_type_keys is not None:
             assert all([
@@ -67,6 +69,7 @@ class MultiImageMixDataset:
             self.flag = self.dataset.flag
         self.num_samples = len(self.dataset)
         self.max_refetch = max_refetch
+        self.deepcopy = copy.deepcopy if deepcopy else lambda x: x
 
         self._fully_initialized = False
         if not lazy_init:
@@ -107,26 +110,14 @@ class MultiImageMixDataset:
         return self.num_samples
 
     def __getitem__(self, idx):
-        results = copy.deepcopy(self.dataset[idx])
+        results = self.dataset[idx]
         for transform in self.pipeline:
             if self._skip_type_keys is not None and \
                     transform.__class__.__name__ in self._skip_type_keys:
                 continue
 
-            def _flatten(t):
-                if isinstance(t, Compose):
-                    for sub_t in t.transforms:
-                        yield from _flatten(sub_t)
-                elif isinstance(t, RandomChoice):
-                    for sub_c in t.transforms:
-                        yield from _flatten(sub_c)
-                elif isinstance(t, RandomApply):
-                    yield from _flatten(t.transforms)
-                else:
-                    yield t
-
             mix_transform = None
-            for t in _flatten(transform):
+            for t in flatten_transforms(transform):
                 if hasattr(t, 'get_indexes'):
                     mix_transform = t
                     break
@@ -138,9 +129,7 @@ class MultiImageMixDataset:
                     indexes = mix_transform.get_indexes(self.dataset)
                     if not isinstance(indexes, collections.abc.Sequence):
                         indexes = [indexes]
-                    mix_results = [
-                        copy.deepcopy(self.dataset[index]) for index in indexes
-                    ]
+                    mix_results = [self.dataset[index] for index in indexes]
                     if None not in mix_results:
                         results['mix_results'] = mix_results
                         break
@@ -153,7 +142,7 @@ class MultiImageMixDataset:
             for i in range(self.max_refetch):
                 # To confirm the results passed the training pipeline
                 # of the wrapper is not None.
-                updated_results = transform(copy.deepcopy(results))
+                updated_results = transform(self.deepcopy(results))
                 if updated_results is not None:
                     results = updated_results
                     break
@@ -179,6 +168,22 @@ class MultiImageMixDataset:
             isinstance(skip_type_key, str) for skip_type_key in skip_type_keys
         ])
         self._skip_type_keys = skip_type_keys
+
+
+def flatten_transforms(
+    t: Union[Compose, RandomChoice, RandomApply, BaseTransform, Callable]
+) -> Iterable[Union[BaseTransform, Callable]]:
+    """Flatten the transforms to a sequence of `BaseTransform`."""
+    if isinstance(t, Compose):
+        for sub_t in t.transforms:
+            yield from flatten_transforms(sub_t)
+    elif isinstance(t, RandomChoice):
+        for sub_c in t.transforms:
+            yield from flatten_transforms(sub_c)
+    elif isinstance(t, RandomApply):
+        yield from flatten_transforms(t.transforms)
+    else:
+        yield t
 
 
 @DATASETS.register_module()
