@@ -135,7 +135,8 @@ class PipelineSwitchHook(OriPipelineSwitchHook):
         if isinstance(train_loader, PrefetchLoader):
             train_loader = train_loader.loader
         if epoch >= self.switch_epoch and not self._has_switched:
-            runner.logger.info('Switch pipeline now!')
+            runner.logger.info(
+                f'Switch pipeline after epoch: {self.switch_epoch}!')
             # The dataset pipeline cannot be updated when
             # persistent_workers is True, so we need to force
             # the dataloader's multi-process restart.
@@ -155,31 +156,6 @@ class PipelineSwitchHook(OriPipelineSwitchHook):
             # the initialization flag.
             if self._restart_dataloader:
                 train_loader._DataLoader__initialized = True
-
-
-try:
-    from mmengine.model import is_model_wrapper
-
-    from mmdet.engine import \
-        DataPreprocessorSwitchHook as OriDataPreprocessorSwitchHook
-
-    @HOOKS.register_module(force=True)
-    class DataPreprocessorSwitchHook(OriDataPreprocessorSwitchHook):
-
-        def before_train_epoch(self, runner) -> None:
-            epoch = runner.epoch
-            model = runner.model
-            # TODO: refactor after mmengine using model wrapper
-            if is_model_wrapper(model):
-                model = model.module
-            if epoch >= self.switch_epoch and not self._has_switched:
-                runner.logger.info('Switch data_preprocessor now!')
-                model.data_preprocessor = self.switch_data_preprocessor.to(
-                    model.data_preprocessor.device)
-                self._has_switched = True
-
-except ImportError:
-    pass
 
 
 def build_dataloader(dataloader: Union[DataLoader, Dict],

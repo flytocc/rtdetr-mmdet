@@ -1,10 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from typing import Optional, Union
 
-from torch import nn
 from mmengine.hooks import Hook
 from mmengine.model import is_model_wrapper
 from mmengine.registry import MODELS
+from torch import nn
 
 from mmdet.registry import HOOKS
 
@@ -15,7 +15,8 @@ class DataPreprocessorSwitchHook(Hook):
 
     Args:
         switch_epoch (int): switch pipeline at this epoch.
-        switch_data_preprocessor (list[dict]): the data_preprocessor to switch to.
+        switch_data_preprocessor (list[dict]): the data_preprocessor to switch
+            to.
     """
 
     def __init__(
@@ -33,7 +34,7 @@ class DataPreprocessorSwitchHook(Hook):
                 switch_data_preprocessor)
         else:
             raise TypeError('switch_data_preprocessor should be a `dict` or '
-                            f'`nn.Module` instance, but got '
+                            '`nn.Module` instance, but got '
                             f'{type(switch_data_preprocessor)}')
         self._has_switched = False
 
@@ -44,7 +45,8 @@ class DataPreprocessorSwitchHook(Hook):
         if is_model_wrapper(model):
             model = model.module
         if epoch >= self.switch_epoch and not self._has_switched:
-            runner.logger.info('Switch data_preprocessor now!')
+            runner.logger.info(
+                f'Switch data_preprocessor after epoch: {self.switch_epoch}!')
             model.data_preprocessor = self.switch_data_preprocessor.to(
                 model.data_preprocessor.device)
             self._has_switched = True
