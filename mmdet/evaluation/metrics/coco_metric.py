@@ -7,9 +7,15 @@ from collections import OrderedDict
 from typing import Dict, List, Optional, Sequence, Union
 
 import numpy as np
+try:
+    import rapidjson as json
+except ImportError:
+    import json
 import torch
 from mmengine.evaluator import BaseMetric
-from mmengine.fileio import dump, get_local_path, load
+from mmengine.fileio import (BaseFileHandler, dump, get_local_path, load,
+                             register_handler)
+from mmengine.fileio.handlers.json_handler import set_default
 from mmengine.logging import MMLogger
 from terminaltables import AsciiTable
 
@@ -595,3 +601,18 @@ class CocoMetric(BaseMetric):
         if tmp_dir is not None:
             tmp_dir.cleanup()
         return eval_results
+
+
+@register_handler('json')
+class JsonHandler(BaseFileHandler):
+
+    def load_from_fileobj(self, file):
+        return json.load(file)
+
+    def dump_to_fileobj(self, obj, file, **kwargs):
+        kwargs.setdefault('default', set_default)
+        json.dump(obj, file, **kwargs)
+
+    def dump_to_str(self, obj, **kwargs):
+        kwargs.setdefault('default', set_default)
+        return json.dumps(obj, **kwargs)
