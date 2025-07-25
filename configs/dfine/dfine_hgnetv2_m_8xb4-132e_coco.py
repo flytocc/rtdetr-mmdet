@@ -76,7 +76,9 @@ train_dataloader = dict(
 num_blocks_list = (1, 1, 3, 1)
 backbone_norm_multi = dict(lr_mult=0.1, decay_mult=1.0)  # NOTE decay_mult=0 ?
 custom_keys = {
-    'backbone': dict(lr_mult=0.1), 'in_proj_bias': dict(decay_mult=0)}
+    'backbone': dict(lr_mult=0.1),
+    'in_proj_bias': dict(decay_mult=0)
+}
 custom_keys.update({
     f'backbone.stem.{name}.bn': backbone_norm_multi
     for name in ['stem1', 'stem2a', 'stem2b', 'stem3', 'stem4']
@@ -85,23 +87,19 @@ custom_keys.update({
     f'backbone.stages.{stage_id}.blocks.{block_id}.layers.{lid}.bn':
     backbone_norm_multi
     for stage_id, num_blocks in enumerate((1, 1))
-    for block_id in range(num_blocks)
-    for lid in range(4)
+    for block_id in range(num_blocks) for lid in range(4)
 })
 custom_keys.update({
     f'backbone.stages.{stage_id}.blocks.{block_id}.layers.{lid}.conv{cid}.bn':
     backbone_norm_multi
     for stage_id, num_blocks in enumerate(num_blocks_list[2:], start=2)
-    for block_id in range(num_blocks)
-    for lid in range(4)
-    for cid in (1, 2)
+    for block_id in range(num_blocks) for lid in range(4) for cid in (1, 2)
 })
 custom_keys.update({
     f'backbone.stages.{stage_id}.blocks.{block_id}.aggregation.{lid}.bn':
     backbone_norm_multi
     for stage_id, num_blocks in enumerate(num_blocks_list)
-    for block_id in range(num_blocks)
-    for lid in range(2)
+    for block_id in range(num_blocks) for lid in range(2)
 })
 custom_keys.update({
     f'backbone.stages.{stage_id}.downsample.bn': backbone_norm_multi
@@ -128,7 +126,9 @@ train_cfg = dict(max_epochs=max_epochs)
 stage2_num_epochs = 12
 custom_hooks = [
     dict(
-        type='EMAHook',
+        type='EMADynamicMomentumHook',
+        restart_epoch=max_epochs - stage2_num_epochs,
+        metric='coco/bbox_mAP',
         ema_type='ExpMomentumEMA',
         momentum=0.0001,
         gamma=1000,

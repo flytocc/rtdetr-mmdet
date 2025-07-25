@@ -117,7 +117,9 @@ stage3_switch_epoch = 78
 stage4_switch_epoch = 148
 custom_hooks = [
     dict(
-        type='EMAHook',
+        type='EMADynamicMomentumHook',
+        restart_epoch=stage4_switch_epoch,
+        metric='coco/bbox_mAP',
         ema_type='ExpMomentumEMA',
         momentum=0.0001,
         gamma=1000,

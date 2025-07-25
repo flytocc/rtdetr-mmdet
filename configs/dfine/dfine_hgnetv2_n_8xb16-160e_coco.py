@@ -45,7 +45,9 @@ train_cfg = dict(max_epochs=max_epochs)
 stage2_num_epochs = 12
 custom_hooks = [
     dict(
-        type='EMAHook',
+        type='EMADynamicMomentumHook',
+        restart_epoch=max_epochs - stage2_num_epochs,
+        metric='coco/bbox_mAP',
         ema_type='ExpMomentumEMA',
         momentum=0.0001,
         gamma=1000,

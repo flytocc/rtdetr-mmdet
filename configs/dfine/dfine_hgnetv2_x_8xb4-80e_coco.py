@@ -29,3 +29,24 @@ model = dict(
 # optimizer
 optim_wrapper = dict(
     paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.01)}))
+
+custom_hooks = [
+    dict(
+        type='EMADynamicMomentumHook',
+        restart_epoch=_base_.max_epochs - _base_.stage2_num_epochs,
+        restart_momentum=0.0002,
+        metric='coco/bbox_mAP',
+        ema_type='ExpMomentumEMA',
+        momentum=0.0001,
+        gamma=1000,
+        update_buffers=True,
+        priority=49),
+    dict(
+        type='DataPreprocessorSwitchHook',
+        switch_epoch=_base_.max_epochs - _base_.stage2_num_epochs,
+        switch_data_preprocessor=_base_.data_preprocessor_stage2),
+    dict(
+        type='PipelineSwitchHook',
+        switch_epoch=_base_.max_epochs - _base_.stage2_num_epochs,
+        switch_pipeline=_base_.train_pipeline_stage2)
+]
