@@ -65,8 +65,6 @@ class RTDETR(DINO):
         for p in self.decoder.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
-        nn.init.kaiming_uniform_(
-            self.decoder.ref_point_head.layers[-1].weight, a=math.sqrt(5))
         for m in self.modules():
             if isinstance(m, MultiScaleDeformableAttention):
                 m.init_weights()
