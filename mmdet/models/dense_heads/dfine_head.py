@@ -1,5 +1,5 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -318,7 +318,13 @@ class DFINEHead(RTDETRHead):
         all_layers_teachers = (teacher, ) * (
             len(all_layers_matching_bbox_corners) - 1) + (None, )
 
+        # initialize cached targets
+        self.cached_bbox_targets = {}
+        self.cached_fgl_targets = None
+        self.cached_dn_targets = None
+        self.cached_dn_fgl_targets = None
         self.num_pos, self.num_neg = None, None
+
         (losses_cls, losses_bbox, losses_iou, losses_fgl,
          losses_ddf) = multi_apply(
              self.loss_by_feat_single,
@@ -475,19 +481,20 @@ class DFINEHead(RTDETRHead):
             Tuple[Tensor]: A tuple including `loss_cls`, `loss_box` and
             `loss_iou`.
         """
-        num_imgs = cls_scores.size(0)
-        cls_scores_list = [cls_scores[i] for i in range(num_imgs)]
-        bbox_preds_list = [bbox_preds[i] for i in range(num_imgs)]
+        num_imgs, num_queries, _ = cls_scores.shape
         (labels_list, label_weights_list, bbox_targets_list,
-         bbox_weights_list, pos_inds_list, neg_inds_list) = multi_apply(
-             self._get_targets_single, cls_scores_list, bbox_preds_list,
-             batch_match_indices, batch_gt_instances, batch_img_metas)
-        num_total_pos = sum((inds.numel() for inds in pos_inds_list))
-        num_total_neg = sum((inds.numel() for inds in neg_inds_list))
+         bbox_num_pos_list) = multi_apply(
+             self._get_cls_targets_single,
+             batch_match_indices,
+             batch_gt_instances,
+             batch_img_metas,
+             num_queries=num_queries,
+             device=bbox_preds.device)
+        num_total_pos = sum(bbox_num_pos_list)
+        num_total_neg = num_imgs * num_queries - num_total_pos
         labels = torch.cat(labels_list, 0)
         label_weights = torch.cat(label_weights_list, 0)
         bbox_targets = torch.cat(bbox_targets_list, 0)
-        # bbox_weights = torch.cat(bbox_weights_list, 0)
 
         # classification loss
         cls_scores = cls_scores.reshape(-1, self.cls_out_channels)
@@ -503,7 +510,7 @@ class DFINEHead(RTDETRHead):
             bg_class_ind = self.num_classes
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
-            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+            cls_iou_targets = cls_scores.new_zeros(cls_scores.shape)
             pos_bbox_targets = bbox_targets[pos_inds]
             pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
             pos_bbox_pred = bbox_preds.reshape(-1, 4)[pos_inds]
@@ -512,27 +519,40 @@ class DFINEHead(RTDETRHead):
             cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
                 pos_decode_bbox_pred.detach(),
                 pos_decode_bbox_targets,
-                is_aligned=True)
+                is_aligned=True).type_as(cls_iou_targets)
             loss_cls = self.loss_cls(
                 cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
         else:
             loss_cls = self.loss_cls(
                 cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
 
-        (bbox_targets_list, bbox_weights_list,
-         bbox_pos_inds_list) = multi_apply(self._get_dfine_targets_single,
-                                           bbox_preds_list,
-                                           merged_match_indices,
-                                           batch_gt_instances, batch_img_metas)
-        num_total_bbox_pos = sum((inds.numel() for inds in bbox_pos_inds_list))
-        bbox_targets = torch.cat(bbox_targets_list, 0)
-        bbox_weights = torch.cat(bbox_weights_list, 0)
+        if num_queries not in self.cached_bbox_targets:
+            (bbox_targets_list, bbox_weights_list,
+             bbox_num_pos_list) = multi_apply(
+                 self._get_bbox_targets_single,
+                 merged_match_indices,
+                 batch_gt_instances,
+                 batch_img_metas,
+                 num_queries=num_queries,
+                 device=bbox_preds.device)
+            num_total_bbox_pos = sum(bbox_num_pos_list)
+            bbox_targets = torch.cat(bbox_targets_list, 0)
+            bbox_weights = torch.cat(bbox_weights_list, 0)
 
-        # Compute the average number of gt boxes across all gpus, for
-        # normalization purposes
-        bbox_avg_factor = bbox_preds.new_tensor([num_total_bbox_pos])
-        bbox_avg_factor = torch.clamp(
-            reduce_mean(bbox_avg_factor), min=1).item()
+            # Compute the average number of gt boxes across all gpus, for
+            # normalization purposes
+            bbox_avg_factor = bbox_preds.new_tensor([num_total_bbox_pos])
+            bbox_avg_factor = torch.clamp(
+                reduce_mean(bbox_avg_factor), min=1).item()
+
+            self.cached_bbox_targets[num_queries] = (bbox_targets,
+                                                     bbox_weights,
+                                                     num_total_bbox_pos,
+                                                     bbox_avg_factor)
+        else:
+            # use cached bbox targets
+            (bbox_targets, bbox_weights, num_total_bbox_pos,
+             bbox_avg_factor) = self.cached_bbox_targets[num_queries]
 
         # construct factors used for rescale bboxes
         factors = []
@@ -569,10 +589,12 @@ class DFINEHead(RTDETRHead):
         initial_bbox_preds = initial_bbox_preds.reshape(-1, 4)
         bbox_corners = bbox_corners.reshape(-1, 4, self.reg_max + 1)
 
-        target_corners, weight_right, weight_left = bbox2distance(
-            initial_bbox_preds[bbox_pos_inds],
-            bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]), self.reg_max,
-            self.reg_scale, 0.5)
+        if self.cached_fgl_targets is None:
+            self.cached_fgl_targets = bbox2distance(
+                initial_bbox_preds[bbox_pos_inds],
+                bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]), self.reg_max,
+                self.reg_scale, 0.5)
+        target_corners, weight_right, weight_left = self.cached_fgl_targets
 
         pos_ious = bbox_overlaps(
             bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
@@ -622,26 +644,25 @@ class DFINEHead(RTDETRHead):
         return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
 
     @torch.no_grad()
-    def _get_targets_single(self, cls_score: Tensor, bbox_pred: Tensor,
-                            match_indices: Tuple[Tensor, Tensor],
-                            gt_instances: InstanceData,
-                            img_meta: dict) -> tuple:
-        """Compute regression and classification targets for one image.
+    def _get_cls_targets_single(self, match_indices: Tuple[Tensor, Tensor],
+                                gt_instances: InstanceData, img_meta: dict,
+                                num_queries: int,
+                                device: Union[str, torch.device]) -> tuple:
+        """Compute classification targets for one image.
 
         Outputs from a single decoder layer of a single feature level are used.
 
         Args:
-            cls_score (Tensor): Box score logits from a single decoder layer
-                for one image. Shape [num_queries, cls_out_channels].
-            bbox_pred (Tensor): Sigmoid outputs from a single decoder layer
-                for one image, with normalized coordinate (cx, cy, w, h) and
-                shape [num_queries, 4].
             match_indices (tuple[Tensor, Tensor]):
-                # TODO
+                A tuple containing two tensors, the first is the sampled
+                positive indices for each image, and the second is the
+                assigned ground truth indices for each positive sample.
             gt_instances (:obj:`InstanceData`): Ground truth of instance
                 annotations. It should includes ``bboxes`` and ``labels``
                 attributes.
             img_meta (dict): Meta information for one image.
+            num_queries (int): The number of queries for the current image.
+            device (str or torch.device): The device of the output tensors.
 
         Returns:
             tuple[Tensor]: a tuple containing the following for one image.
@@ -649,109 +670,90 @@ class DFINEHead(RTDETRHead):
             - labels (Tensor): Labels of each image.
             - label_weights (Tensor]): Label weights of each image.
             - bbox_targets (Tensor): BBox targets of each image.
-            - bbox_weights (Tensor): BBox weights of each image.
-            - pos_inds (Tensor): Sampled positive indices for each image.
-            - neg_inds (Tensor): Sampled negative indices for each image.
+            - num_pos (int): The number of positive samples for the image.
         """
-        img_h, img_w = img_meta['img_shape']
-        factor = bbox_pred.new_tensor([img_w, img_h, img_w,
-                                       img_h]).unsqueeze(0)
-        num_bboxes = bbox_pred.size(0)
-
-        # assigner and sampler
-        if match_indices is None:
-            # convert bbox_pred from xywh, normalized to xyxy, unnormalized
-            bbox_pred = bbox_cxcywh_to_xyxy(bbox_pred)
-            bbox_pred = bbox_pred * factor
-
-            pred_instances = InstanceData(scores=cls_score, bboxes=bbox_pred)
-            assign_result = self.assigner.assign(
-                pred_instances=pred_instances,
-                gt_instances=gt_instances,
-                img_meta=img_meta)
-
-            pos_inds = torch.nonzero(
-                assign_result.gt_inds > 0,
-                as_tuple=False).squeeze(-1).unique()
-            pos_assigned_gt_inds = assign_result.gt_inds[pos_inds] - 1
-        else:
-            pos_inds, pos_assigned_gt_inds = match_indices
-
+        pos_inds, pos_assigned_gt_inds = match_indices
         gt_bboxes = gt_instances.bboxes
-        gt_labels = gt_instances.labels
-        pos_gt_bboxes = gt_bboxes[pos_assigned_gt_inds.long(), :]
+        dtype = gt_bboxes.dtype
 
-        # label targets
-        labels = gt_bboxes.new_full((num_bboxes, ),
-                                    self.num_classes,
-                                    dtype=torch.long)
-        labels[pos_inds] = gt_labels[pos_assigned_gt_inds]
-        label_weights = gt_bboxes.new_ones(num_bboxes)
+        img_h, img_w = img_meta['img_shape']
+        factor = torch.tensor([img_w, img_h, img_w, img_h],
+                              dtype=dtype,
+                              device=device).unsqueeze(0)
 
-        # bbox targets
-        bbox_targets = torch.zeros_like(bbox_pred, dtype=gt_bboxes.dtype)
-        bbox_weights = torch.zeros_like(bbox_pred, dtype=gt_bboxes.dtype)
-        bbox_weights[pos_inds] = 1.0
-
-        neg_inds = torch.nonzero(
-            bbox_weights.sum(-1) == 0, as_tuple=False).squeeze(-1).unique()
-
-        # DETR regress the relative position of boxes (cxcywh) in the image.
-        # Thus the learning target should be normalized by the image size, also
-        # the box format should be converted from defaultly x1y1x2y2 to cxcywh.
+        pos_gt_bboxes = gt_bboxes[pos_assigned_gt_inds]
         pos_gt_bboxes_normalized = pos_gt_bboxes / factor
         pos_gt_bboxes_targets = bbox_xyxy_to_cxcywh(pos_gt_bboxes_normalized)
+
+        bbox_targets = torch.zeros((num_queries, 4),
+                                   dtype=dtype,
+                                   device=device)
         bbox_targets[pos_inds] = pos_gt_bboxes_targets
-        return (labels, label_weights, bbox_targets, bbox_weights, pos_inds,
-                neg_inds)
+
+        # label targets
+        gt_labels = gt_instances.labels
+        labels = torch.full((num_queries, ),
+                            self.num_classes,
+                            dtype=torch.long,
+                            device=device)
+        labels[pos_inds] = gt_labels[pos_assigned_gt_inds]
+        label_weights = gt_labels.new_ones(num_queries)
+
+        return labels, label_weights, bbox_targets, pos_inds.numel()
 
     @torch.no_grad()
-    def _get_dfine_targets_single(self, bbox_pred: Tensor,
-                                  match_indices: Tuple[Tensor, Tensor],
-                                  gt_instances: InstanceData,
-                                  img_meta: dict) -> tuple:
-        """Compute regression and classification targets for one image.
+    def _get_bbox_targets_single(self, match_indices: Tuple[Tensor, Tensor],
+                                 gt_instances: InstanceData, img_meta: dict,
+                                 num_queries: int,
+                                 device: Union[str, torch.device]) -> tuple:
+        """Compute regression targets for one image.
 
         Outputs from a single decoder layer of a single feature level are used.
 
         Args:
-            bbox_pred (Tensor): Sigmoid outputs from a single decoder layer
-                for one image, with normalized coordinate (cx, cy, w, h) and
-                shape [num_queries, 4].
             match_indices (tuple[Tensor, Tensor]):
-                # TODO
+                A tuple containing two tensors, the first is the sampled
+                positive indices for each image, and the second is the
+                assigned ground truth indices for each positive sample.
             gt_instances (:obj:`InstanceData`): Ground truth of instance
                 annotations. It should includes ``bboxes`` and ``labels``
                 attributes.
             img_meta (dict): Meta information for one image.
+            num_queries (int): The number of queries for the current image.
+            device (str or torch.device): The device of the output tensors.
 
         Returns:
             tuple[Tensor]: a tuple containing the following for one image.
 
             - bbox_targets (Tensor): BBox targets of each image.
             - bbox_weights (Tensor): BBox weights of each image.
+            - num_pos (int): The number of positive samples for the image.
         """
-        img_h, img_w = img_meta['img_shape']
-        factor = bbox_pred.new_tensor([img_w, img_h, img_w,
-                                       img_h]).unsqueeze(0)
-
+        pos_inds, pos_assigned_gt_inds = match_indices
         gt_bboxes = gt_instances.bboxes
+        dtype = gt_bboxes.dtype
 
-        # bbox targets
-        bbox_pos_inds, pos_assigned_gt_inds = match_indices
-        pos_gt_bboxes = gt_bboxes[pos_assigned_gt_inds.long(), :]
+        img_h, img_w = img_meta['img_shape']
+        factor = torch.tensor([img_w, img_h, img_w, img_h],
+                              dtype=dtype,
+                              device=device).unsqueeze(0)
 
-        bbox_targets = torch.zeros_like(bbox_pred, dtype=gt_bboxes.dtype)
-        bbox_weights = torch.zeros_like(bbox_pred, dtype=gt_bboxes.dtype)
-        bbox_weights[bbox_pos_inds] = 1.0
-
-        # DETR regress the relative position of boxes (cxcywh) in the image.
-        # Thus the learning target should be normalized by the image size, also
-        # the box format should be converted from defaultly x1y1x2y2 to cxcywh.
+        pos_gt_bboxes = gt_bboxes[pos_assigned_gt_inds]
         pos_gt_bboxes_normalized = pos_gt_bboxes / factor
         pos_gt_bboxes_targets = bbox_xyxy_to_cxcywh(pos_gt_bboxes_normalized)
-        bbox_targets[bbox_pos_inds] = pos_gt_bboxes_targets
-        return bbox_targets, bbox_weights, bbox_pos_inds
+
+        bbox_targets = torch.zeros((num_queries, 4),
+                                   dtype=dtype,
+                                   device=device)
+        bbox_targets[pos_inds] = pos_gt_bboxes_targets
+
+        # bbox weights
+        bbox_weights = torch.zeros((num_queries, 4),
+                                   dtype=dtype,
+                                   device=device)
+        bbox_weights[pos_inds] = 1.0
+
+        return bbox_targets, bbox_weights, pos_inds.numel()
 
     def _loss_dn_single(self, dn_cls_scores: Tensor, dn_bbox_preds: Tensor,
                         dn_bbox_corners: Optional[Tensor],
@@ -797,30 +799,46 @@ class DFINEHead(RTDETRHead):
                 if dn_bbox_corners is not None else None
             return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
 
-        cls_reg_targets = self.get_dn_targets(batch_gt_instances,
-                                              batch_img_metas, dn_meta)
-        (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
-         num_total_pos, num_total_neg) = cls_reg_targets
-        labels = torch.cat(labels_list, 0)
-        label_weights = torch.cat(label_weights_list, 0)
-        bbox_targets = torch.cat(bbox_targets_list, 0)
-        bbox_weights = torch.cat(bbox_weights_list, 0)
+        if self.cached_dn_targets is None:
+            cls_reg_targets = self.get_dn_targets(batch_gt_instances,
+                                                  batch_img_metas, dn_meta)
+            (labels_list, label_weights_list, bbox_targets_list,
+             bbox_weights_list, num_total_pos, num_total_neg) = cls_reg_targets
+            labels = torch.cat(labels_list, 0)
+            label_weights = torch.cat(label_weights_list, 0)
+            bbox_targets = torch.cat(bbox_targets_list, 0)
+            bbox_weights = torch.cat(bbox_weights_list, 0)
+
+            # construct weighted avg_factor to match with the official DETR repo
+            cls_avg_factor = \
+                num_total_pos * 1.0 + num_total_neg * self.bg_cls_weight
+            if self.sync_cls_avg_factor:
+                cls_avg_factor = reduce_mean(
+                    dn_bbox_preds.new_tensor([cls_avg_factor]))
+            cls_avg_factor = max(cls_avg_factor, 1)
+
+            # Compute the average number of gt boxes across all gpus, for
+            # normalization purposes
+            bbox_avg_factor = dn_bbox_preds.new_tensor([num_total_pos])
+            bbox_avg_factor = torch.clamp(
+                reduce_mean(bbox_avg_factor), min=1).item()
+
+            self.cached_dn_targets = (labels, label_weights, bbox_targets,
+                                      bbox_weights, num_total_pos,
+                                      cls_avg_factor, bbox_avg_factor)
+        else:
+            # use cached dn targets
+            (labels, label_weights, bbox_targets, bbox_weights, num_total_pos,
+             cls_avg_factor, bbox_avg_factor) = self.cached_dn_targets
 
         # classification loss
         cls_scores = dn_cls_scores.reshape(-1, self.cls_out_channels)
-        # construct weighted avg_factor to match with the official DETR repo
-        cls_avg_factor = \
-            num_total_pos * 1.0 + num_total_neg * self.bg_cls_weight
-        if self.sync_cls_avg_factor:
-            cls_avg_factor = reduce_mean(
-                cls_scores.new_tensor([cls_avg_factor]))
-        cls_avg_factor = max(cls_avg_factor, 1)
 
         if isinstance(self.loss_cls, VarifocalLoss):
             bg_class_ind = self.num_classes
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
-            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+            cls_iou_targets = cls_scores.new_zeros(cls_scores.shape)
             pos_bbox_targets = bbox_targets[pos_inds]
             pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
             pos_bbox_pred = dn_bbox_preds.reshape(-1, 4)[pos_inds]
@@ -829,18 +847,12 @@ class DFINEHead(RTDETRHead):
             cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
                 pos_decode_bbox_pred.detach(),
                 pos_decode_bbox_targets,
-                is_aligned=True)
+                is_aligned=True).type_as(cls_iou_targets)
             loss_cls = self.loss_cls(
                 cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
         else:
             loss_cls = self.loss_cls(
                 cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
-
-        # Compute the average number of gt boxes across all gpus, for
-        # normalization purposes
-        bbox_avg_factor = loss_cls.new_tensor([num_total_pos])
-        bbox_avg_factor = torch.clamp(
-            reduce_mean(bbox_avg_factor), min=1).item()
 
         # construct factors used for rescale bboxes
         factors = []
@@ -877,10 +889,13 @@ class DFINEHead(RTDETRHead):
         initial_dn_bbox_preds = initial_dn_bbox_preds.reshape(-1, 4)
         dn_bbox_corners = dn_bbox_corners.reshape(-1, 4, self.reg_max + 1)
 
-        target_corners, weight_right, weight_left = bbox2distance(
-            initial_dn_bbox_preds[bbox_pos_inds],
-            bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]), self.reg_max,
-            self.reg_scale, 0.5)
+        if self.cached_dn_fgl_targets is None:
+            self.cached_dn_fgl_targets = bbox2distance(
+                initial_dn_bbox_preds[bbox_pos_inds],
+                bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]), self.reg_max,
+                self.reg_scale, 0.5)
+        target_corners, weight_right, weight_left = self.cached_dn_fgl_targets
+
         pos_ious = bbox_overlaps(
             bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
             is_aligned=True).detach()
