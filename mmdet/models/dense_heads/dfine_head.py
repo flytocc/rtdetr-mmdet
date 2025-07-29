@@ -15,7 +15,6 @@ from mmdet.structures.bbox.transforms import bbox_xyxy_to_cxcywh
 from mmdet.utils import ConfigType, InstanceList, OptInstanceList, reduce_mean
 from ..layers.transformer.dfine_layers import bbox2distance
 from ..losses import VarifocalLoss
-from ..task_modules import AssignResult
 from ..utils import multi_apply
 from .rtdetr_head import RTDETRHead
 
@@ -137,7 +136,7 @@ class DFINEHead(RTDETRHead):
             self, all_layers_matching_cls_scores: List[Tensor],
             all_layers_matching_bbox_preds: List[Tensor],
             batch_gt_instances: InstanceList,
-            batch_img_metas: List[dict]) -> List[List[AssignResult]]:
+            batch_img_metas: List[dict]) -> List[List[Tuple[Tensor, Tensor]]]:
         """Get matching indices for all decoder layers."""
         num_imgs, num_queries, _ = all_layers_matching_cls_scores[0].shape
         gt_instances = InstanceData.cat(batch_gt_instances)
@@ -195,7 +194,7 @@ class DFINEHead(RTDETRHead):
 
     @torch.no_grad()
     def _get_merged_match_indices(
-        self, *all_match_indices: List[List[AssignResult]]
+        self, *all_match_indices: List[List[Tuple[Tensor, Tensor]]]
     ) -> List[Tuple[Tensor, Tensor]]:
         """Get a matching union set across all decoder layers."""
         results = []
