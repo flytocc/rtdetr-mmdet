@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 from .checkloss_hook import CheckInvalidLossHook
+from .checkpoint_after_val_hook import CheckpointAfterValHook
 from .data_preprocessor_switch_hook import DataPreprocessorSwitchHook
 from .ema_dynamic_momentum_hook import EMADynamicMomentumHook
 from .mean_teacher_hook import MeanTeacherHook
@@ -20,5 +21,5 @@ __all__ = [
     'NumClassCheckHook', 'MeanTeacherHook', 'trigger_visualization_hook',
     'PipelineSwitchHook', 'TrackVisualizationHook',
     'GroundingVisualizationHook', 'DataPreprocessorSwitchHook',
-    'EMADynamicMomentumHook'
+    'EMADynamicMomentumHook', 'CheckpointAfterValHook'
 ]

@@ -35,7 +35,6 @@ custom_hooks = [
         type='EMADynamicMomentumHook',
         restart_epoch=_base_.max_epochs - _base_.stage2_num_epochs,
         restart_momentum=0.0002,
-        metric='coco/bbox_mAP',
         ema_type='ExpMomentumEMA',
         momentum=0.0001,
         gamma=1000,

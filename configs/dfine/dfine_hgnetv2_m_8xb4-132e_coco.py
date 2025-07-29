@@ -105,12 +105,13 @@ auto_scale_lr = dict(base_batch_size=32)
 max_epochs = 132
 train_cfg = dict(max_epochs=max_epochs)
 
+default_hooks = dict(checkpoint=dict(type='CheckpointAfterValHook'))
+
 stage2_num_epochs = 12
 custom_hooks = [
     dict(
         type='EMADynamicMomentumHook',
         restart_epoch=max_epochs - stage2_num_epochs,
-        metric='coco/bbox_mAP',
         ema_type='ExpMomentumEMA',
         momentum=0.0001,
         gamma=1000,

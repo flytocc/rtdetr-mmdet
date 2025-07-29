@@ -47,7 +47,6 @@ custom_hooks = [
     dict(
         type='EMADynamicMomentumHook',
         restart_epoch=max_epochs - stage2_num_epochs,
-        metric='coco/bbox_mAP',
         ema_type='ExpMomentumEMA',
         momentum=0.0001,
         gamma=1000,
