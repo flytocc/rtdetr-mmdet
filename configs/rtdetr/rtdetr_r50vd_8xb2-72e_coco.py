@@ -3,6 +3,8 @@ _base_ = [
 ]
 pretrained = 'https://github.com/flytocc/mmdetection/releases/download/model_zoo/resnet50vd_ssld_v2_pretrained_d037e232.pth'  # noqa
 
+base_size_repeat = 3
+
 model = dict(
     type='RTDETR',
     num_queries=300,  # num_matching_queries, 900 for DINO
@@ -14,11 +16,9 @@ model = dict(
             dict(
                 type='BatchSyncRandomResize',
                 interval=1,
-                interpolations=['nearest', 'bilinear', 'bicubic', 'area'],
-                random_sizes=[
-                    480, 512, 544, 576, 608, 640, 640, 640, 672, 704, 736, 768,
-                    800
-                ])
+                interpolations='nearest',
+                random_sizes=[480, 512, 544, 576, 608] + [640] * base_size_repeat +
+                    [672, 704, 736, 768, 800])
         ],
         mean=[0, 0, 0],  # [123.675, 116.28, 103.53] for DINO
         std=[255, 255, 255],  # [58.395, 57.12, 57.375] for DINO
@@ -111,11 +111,14 @@ model = dict(
 
 # train_pipeline, NOTE the img_scale and the Pad's size_divisor is different
 # from the default setting in mmdet.
-interpolations = ['nearest', 'bilinear', 'bicubic', 'area', 'lanczos']
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
     dict(type='LoadAnnotations', with_bbox=True),
-    dict(type='PhotoMetricDistortion', hue_delta=12.75),
+    dict(
+        type='PhotoMetricDistortion',
+        hue_delta=12.75,
+        clip_val=255,
+        force_float32=False),
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',
@@ -123,15 +126,7 @@ train_pipeline = [
             type='MinIoURandomCrop', cover_all_box=False, trials=40),
         prob=0.8),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(
-        type='RandomChoice',
-        transforms=[[
-            dict(
-                type='Resize',
-                scale=(640, 640),
-                keep_ratio=False,
-                interpolation=interpolation)
-        ] for interpolation in interpolations]),
+    dict(type='Resize', scale=(640, 640), keep_ratio=False),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
     dict(type='RandomFlip', prob=0.5),
     dict(type='PackDetInputs')
@@ -139,11 +134,7 @@ train_pipeline = [
 
 test_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
-    dict(
-        type='Resize',
-        scale=(640, 640),
-        keep_ratio=False,
-        interpolation='bicubic'),
+    dict(type='Resize', scale=(640, 640), keep_ratio=False),
     dict(type='LoadAnnotations', with_bbox=True),
     dict(
         type='PackDetInputs',

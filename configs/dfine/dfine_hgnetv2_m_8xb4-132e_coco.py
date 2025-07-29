@@ -51,25 +51,7 @@ model = dict(
             reduction='none',
             loss_weight=1.5)))
 
-train_pipeline = [
-    dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
-    dict(type='LoadAnnotations', with_bbox=True),
-    dict(type='PhotoMetricDistortion', hue_delta=12.75),
-    dict(type='Expand', mean=[0, 0, 0]),
-    dict(
-        type='RandomApply',
-        transforms=dict(
-            type='MinIoURandomCrop', cover_all_box=False, trials=40),
-        prob=0.8),
-    dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(type='Resize', scale=(640, 640), keep_ratio=False),
-    dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(type='RandomFlip', prob=0.5),
-    dict(type='PackDetInputs')
-]
-
-train_dataloader = dict(
-    batch_size=4, num_workers=4, dataset=dict(pipeline=train_pipeline))
+train_dataloader = dict(batch_size=4, num_workers=4)
 
 # set all norm layers in backbone to lr_mult=0.1 and decay_mult=0.0
 # set all other layers in backbone to lr_mult=0.1

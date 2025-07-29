@@ -14,8 +14,7 @@ model = dict(
     decoder=dict(num_layers=3))
 
 # optimizer
-optim_wrapper = dict(
-    paramwise_cfg=dict(custom_keys=dict(_delete_=True), bias_decay_mult=1.0))
+optim_wrapper = dict(paramwise_cfg=dict(custom_keys=dict(_delete_=True)))
 
 # learning policy
 max_epochs = 120
