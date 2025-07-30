@@ -8,6 +8,8 @@ base_size_repeat = 3
 model = dict(
     type='RTDETR',
     num_queries=300,  # num_matching_queries, 900 for DINO
+    # spatial_shapes=((80, 80), (40, 40), (
+    #     20, 20)),  # for strdies (8, 16, 32) with image_size 640x640. # noqa
     with_box_refine=True,
     as_two_stage=True,
     data_preprocessor=dict(
@@ -17,8 +19,8 @@ model = dict(
                 type='BatchSyncRandomResize',
                 interval=1,
                 interpolations='nearest',
-                random_sizes=[480, 512, 544, 576, 608] + [640] * base_size_repeat +
-                    [672, 704, 736, 768, 800])
+                random_sizes=[480, 512, 544, 576, 608] +
+                [640] * base_size_repeat + [672, 704, 736, 768, 800])
         ],
         mean=[0, 0, 0],  # [123.675, 116.28, 103.53] for DINO
         std=[255, 255, 255],  # [58.395, 57.12, 57.375] for DINO
@@ -144,7 +146,7 @@ test_pipeline = [
 
 train_dataloader = dict(
     batch_sampler=None,
-    drop_last=True ,
+    drop_last=True,
     pin_memory=True,
     dataset=dict(filter_cfg=None, pipeline=train_pipeline))
 val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
@@ -157,7 +159,9 @@ optim_wrapper = dict(
     clip_grad=dict(max_norm=0.1, norm_type=2),
     paramwise_cfg=dict(
         custom_keys={
-            'backbone': dict(lr_mult=0.1), 'in_proj_bias': dict(decay_mult=0)},
+            'backbone': dict(lr_mult=0.1),
+            'in_proj_bias': dict(decay_mult=0)
+        },
         norm_decay_mult=0,
         bias_decay_mult=0,
         bypass_duplicate=True))

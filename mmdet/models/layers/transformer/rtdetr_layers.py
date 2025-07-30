@@ -523,6 +523,7 @@ class RTDETRHybridEncoder(BaseModule):
 
         if spatial_shapes is not None:
             for idx in range(len(use_encoder_idx)):
+                spatial_shapes = tuple(map(tuple, spatial_shapes))
                 position_embedding = self.build_2d_sincos_position_embedding(
                     *spatial_shapes[idx], in_channels[idx])
                 self.register_buffer(

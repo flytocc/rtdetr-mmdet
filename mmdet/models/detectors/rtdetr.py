@@ -33,12 +33,12 @@ class RTDETR(DINO):
                  spatial_shapes: Optional[Tuple[Tuple[int, int]]] = None,
                  use_syncbn: bool = True,
                  **kwargs) -> None:
+        kwargs['encoder']['spatial_shapes'] = spatial_shapes
         super().__init__(*args, **kwargs)
         self.eval_idx = eval_idx
 
         if spatial_shapes is not None:
             spatial_shapes = tuple(map(tuple, spatial_shapes))
-            kwargs['decoder']['spatial_shapes'] = spatial_shapes
             proposals, proposals_valid = self.gen_proposals(spatial_shapes)
             self.register_buffer('proposals', proposals, persistent=False)
             self.register_buffer(
@@ -271,7 +271,7 @@ class RTDETR(DINO):
             output_proposals, output_proposals_valid = self.gen_proposals(
                 spatial_shapes, batch_size, memory.device)
 
-        output_memory = memory * output_proposals_valid
+        output_memory = memory * output_proposals_valid.type_as(memory)
         output_memory = self.memory_trans_fc(output_memory)
         output_memory = self.memory_trans_norm(output_memory)
         # [bs, sum(hw), 2]

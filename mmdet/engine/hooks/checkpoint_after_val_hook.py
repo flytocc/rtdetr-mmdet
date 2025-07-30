@@ -1,5 +1,7 @@
-from mmdet.registry import HOOKS
+# Copyright (c) OpenMMLab. All rights reserved.
 from mmengine.hooks import CheckpointHook
+
+from mmdet.registry import HOOKS
 
 
 @HOOKS.register_module()
