@@ -604,6 +604,7 @@ class DETRHead(BaseModule):
         """
         assert len(cls_score) == len(bbox_pred)  # num_queries
         max_per_img = self.test_cfg.get('max_per_img', len(cls_score))
+        max_per_img = min(max_per_img, len(cls_score))
         img_shape = img_meta['img_shape']
         # exclude background
         if self.loss_cls.use_sigmoid:

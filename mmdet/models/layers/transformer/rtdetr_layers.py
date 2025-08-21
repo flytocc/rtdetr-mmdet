@@ -476,7 +476,7 @@ class RTDETRHybridEncoder(BaseModule):
 
     Args:
         layer_cfg (:obj:`ConfigDict` or dict): The config dict for the encode
-            layer.
+            layer. Defaults to None.
         in_channels (List[int], optional): The input channels of the
             feature maps. Defaults to [256, 256, 256].
         use_encoder_idx (List[int], optional): The indices of the encoder
@@ -495,7 +495,7 @@ class RTDETRHybridEncoder(BaseModule):
     """
 
     def __init__(self,
-                 layer_cfg: ConfigType,
+                 layer_cfg: OptConfigType = None,
                  in_channels: List[int] = [256, 256, 256],
                  use_encoder_idx: List[int] = [2],
                  num_encoder_layers: int = 1,
@@ -507,7 +507,6 @@ class RTDETRHybridEncoder(BaseModule):
         super().__init__(init_cfg=init_cfg)
         self.in_channels = in_channels
         self.use_encoder_idx = use_encoder_idx
-        self.num_encoder_layers = num_encoder_layers
         self.pe_temperature = pe_temperature
         self.encode_before_fpn = encode_before_fpn
 

@@ -3,7 +3,7 @@ _base_ = '../rtdetrv2/rtdetrv2_r50vd_8xb2-72e_coco.py'
 pretrained = 'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B2_stage1.pth'  # noqa
 
 base_dim = 256
-num_points = [3, 6, 3]
+num_points = (3, 6, 3)
 reg_max = 32
 reg_scale = 4
 layer_scale = 1.0

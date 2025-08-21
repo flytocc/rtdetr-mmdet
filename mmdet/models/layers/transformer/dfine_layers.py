@@ -469,7 +469,7 @@ class MultiNumPointsMultiScaleDeformableAttention(BaseModule):
                  embed_dims: int = 256,
                  num_heads: int = 8,
                  num_levels: int = 4,
-                 num_points: Union[int, List[int]] = 4,
+                 num_points: Union[int, Tuple[int]] = 4,
                  im2col_step: int = 64,
                  dropout: float = 0.1,
                  batch_first: bool = False,
@@ -508,7 +508,7 @@ class MultiNumPointsMultiScaleDeformableAttention(BaseModule):
 
         if isinstance(num_points, int):
             num_levels = [num_points] * num_levels
-        assert isinstance(num_points, list) and len(num_points) == num_levels
+        assert isinstance(num_points, tuple) and len(num_points) == num_levels
 
         num_points_scale = [1 / n for n in num_points for _ in range(n)]
         self.register_buffer(
