@@ -1,6 +1,5 @@
 from typing import List, Tuple
 
-import torch
 from torch import Tensor
 
 from mmdet.models.roi_heads import StandardRoIHead
@@ -50,26 +49,22 @@ class CoStandardRoIHead(StandardRoIHead):
             bbox_targets = bbox_results['bbox_targets']
             for res in sampling_results:
                 max_proposal = min(max_proposal, res.bboxes.shape[0])
-            ori_coords = bbox2roi([res.bboxes for res in sampling_results])
+            ori_coords = bbox_results['rois']
             ori_proposals, ori_labels, \
                 ori_bbox_targets, ori_bbox_feats = [], [], [], []
             for i in range(num_imgs):
                 idx = (ori_coords[:, 0] == i).nonzero().squeeze(1)
                 idx = idx[:max_proposal]
-                ori_proposal = ori_coords[idx][:, 1:].unsqueeze(0)
-                ori_label = bbox_targets[0][idx].unsqueeze(0)
-                ori_bbox_target = bbox_targets[2][idx].unsqueeze(0)
+                ori_proposal = ori_coords[idx][:, 1:]
+                ori_label = bbox_targets[0][idx]
+                ori_bbox_target = bbox_targets[2][idx]
                 ori_bbox_feat = bbox_results['bbox_feats'].mean(-1).mean(-1)
-                ori_bbox_feat = ori_bbox_feat[idx].unsqueeze(0)
+                ori_bbox_feat = ori_bbox_feat[idx]
                 ori_proposals.append(ori_proposal)
                 ori_labels.append(ori_label)
                 ori_bbox_targets.append(ori_bbox_target)
                 ori_bbox_feats.append(ori_bbox_feat)
-            ori_coords = torch.cat(ori_proposals, dim=0)
-            ori_labels = torch.cat(ori_labels, dim=0)
-            ori_bbox_targets = torch.cat(ori_bbox_targets, dim=0)
-            ori_bbox_feats = torch.cat(ori_bbox_feats, dim=0)
-            pos_coords = (ori_coords, ori_labels, ori_bbox_targets,
+            pos_coords = (ori_proposals, ori_labels, ori_bbox_targets,
                           ori_bbox_feats, 'rcnn')
             losses.update(pos_coords=pos_coords)
 
@@ -104,5 +99,6 @@ class CoStandardRoIHead(StandardRoIHead):
 
         bbox_results.update(loss_bbox=bbox_loss_and_target['loss_bbox'])
         # diff
-        bbox_results.update(bbox_targets=bbox_loss_and_target['bbox_targets'])
+        bbox_results.update(
+            rois=rois, bbox_targets=bbox_loss_and_target['bbox_targets'])
         return bbox_results
