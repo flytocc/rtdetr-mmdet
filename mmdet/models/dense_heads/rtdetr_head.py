@@ -79,12 +79,6 @@ class RTDETRHead(DINOHead):
             Tuple[Tensor]: A tuple including `loss_cls`, `loss_box` and
             `loss_iou`.
         """
-        if dn_cls_scores.size(1) == 0:
-            assert dn_bbox_preds.size(1) == 0
-            loss_cls = dn_cls_scores.new_tensor(0)
-            loss_bbox = loss_iou = dn_bbox_preds.new_tensor(0)
-            return loss_cls, loss_bbox, loss_iou
-
         cls_reg_targets = self.get_dn_targets(batch_gt_instances,
                                               batch_img_metas, dn_meta)
         (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
@@ -104,28 +98,32 @@ class RTDETRHead(DINOHead):
                 cls_scores.new_tensor([cls_avg_factor]))
         cls_avg_factor = max(cls_avg_factor, 1)
 
-        if isinstance(self.loss_cls, VarifocalLoss):
-            bg_class_ind = self.num_classes
-            pos_inds = ((labels >= 0)
-                        & (labels < bg_class_ind)).nonzero().squeeze(1)
-            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
-            pos_bbox_targets = bbox_targets[pos_inds]
-            pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
-            pos_bbox_pred = dn_bbox_preds.reshape(-1, 4)[pos_inds]
-            pos_decode_bbox_pred = bbox_cxcywh_to_xyxy(pos_bbox_pred)
-            pos_labels = labels[pos_inds]
-            cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
-                pos_decode_bbox_pred.detach(),
-                pos_decode_bbox_targets,
-                is_aligned=True)
-            loss_cls = self.loss_cls(
-                cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
+        if len(cls_scores) > 0:
+            if isinstance(self.loss_cls, VarifocalLoss):
+                bg_class_ind = self.num_classes
+                pos_inds = ((labels >= 0)
+                            & (labels < bg_class_ind)).nonzero().squeeze(1)
+                cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+                pos_bbox_targets = bbox_targets[pos_inds]
+                pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
+                pos_bbox_pred = dn_bbox_preds.reshape(-1, 4)[pos_inds]
+                pos_decode_bbox_pred = bbox_cxcywh_to_xyxy(pos_bbox_pred)
+                pos_labels = labels[pos_inds]
+                cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
+                    pos_decode_bbox_pred.detach(),
+                    pos_decode_bbox_targets,
+                    is_aligned=True)
+                loss_cls = self.loss_cls(
+                    cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
+            else:
+                loss_cls = self.loss_cls(
+                    cls_scores,
+                    labels,
+                    label_weights,
+                    avg_factor=cls_avg_factor)
         else:
-            loss_cls = self.loss_cls(
-                cls_scores,
-                labels,
-                label_weights,
-                avg_factor=cls_avg_factor)
+            loss_cls = torch.zeros(
+                1, dtype=cls_scores.dtype, device=cls_scores.device)
 
         # Compute the average number of gt boxes across all gpus, for
         # normalization purposes
