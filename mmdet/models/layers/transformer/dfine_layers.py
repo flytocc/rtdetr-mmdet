@@ -336,7 +336,7 @@ def bbox2distance(points, bbox, reg_max, reg_scale, up, eps=0.1):
         -1).detach(), weight_right.detach(), weight_left.detach()
 
 
-def distance2bbox(points, distance, reg_scale):
+def distance2bbox(points, distance, reg_scale, clamp_wh=True):
     """Decodes edge-distances into bounding box coordinates.
 
     Args:
@@ -350,12 +350,14 @@ def distance2bbox(points, distance, reg_scale):
         Tensor: Bounding boxes in (N, 4) or (B, N, 4) format [cx, cy, w, h].
     """
     distance = distance / abs(reg_scale) + 0.5
-    x1 = points[..., 0] - distance[..., 0] * points[..., 2]
-    y1 = points[..., 1] - distance[..., 1] * points[..., 3]
-    x2 = points[..., 0] + distance[..., 2] * points[..., 2]
-    y2 = points[..., 1] + distance[..., 3] * points[..., 3]
-    bboxes = [(x1 + x2) / 2, (y1 + y2) / 2, (x2 - x1), (y2 - y1)]
-    return torch.stack(bboxes, dim=-1)
+    cxcy, wh = points[..., :2], points[..., 2:]
+    x1y1 = cxcy - distance[..., :2] * wh
+    x2y2 = cxcy + distance[..., 2:] * wh
+    decoded_cxcy = (x1y1 + x2y2) / 2
+    decoded_wh = x2y2 - x1y1
+    if clamp_wh:
+        decoded_wh = decoded_wh.clamp(min=0)
+    return torch.cat([decoded_cxcy, decoded_wh], dim=-1)
 
 
 class Gate(BaseModule):
@@ -750,7 +752,7 @@ class DFINETransformerDecoderLayer(DeformableDetrTransformerDecoderLayer):
             **kwargs)
         query = self.norms[0](query)
 
-        kwargs.pop('identity', None)
+        assert kwargs.pop('identity', None) is None
         query_ = self.cross_attn(
             query=query,
             key=key,
@@ -1012,19 +1014,17 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             pred_corners = reg_branches[lid](
                 query + query_detach) + pred_corners_undetach
             new_reference_points = distance2bbox(
-                reference_points_initial_detach, self.integral(pred_corners),
-                self.reg_scale)
+                reference_points_initial_detach,
+                self.integral(pred_corners),
+                self.reg_scale,
+                clamp_wh=True)
 
             if self.training or lid == eval_idx:
                 # Lqe does not affect the performance here.
                 scores = self.lqe_layers[lid](cls_branches[lid](query),
                                               pred_corners)
-                cxcy = new_reference_points[..., :2]
-                wh = new_reference_points[..., 2:].clamp(min=0)
-                new_reference_points_clamp = torch.cat([cxcy, wh], dim=-1)
-
                 all_layers_outputs_classes.append(scores)
-                all_layers_outputs_coords.append(new_reference_points_clamp)
+                all_layers_outputs_coords.append(new_reference_points)
                 all_layers_outputs_corners.append(pred_corners)
 
                 if not self.training or lid == self.num_layers - 1:
