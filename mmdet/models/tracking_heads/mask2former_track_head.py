@@ -218,7 +218,7 @@ class Mask2FormerTrackHead(MaskFormerHead):
                 gt_instances.masks = gt_instances.masks.to_tensor(
                     dtype=torch.bool, device=_device)
             all_ins_id = torch.cat([
-                gt_instances.instances_ids
+                gt_instances.instances_id
                 for gt_instances in pair_gt_insatences
             ])
             all_ins_id = all_ins_id.unique().tolist()
@@ -245,12 +245,12 @@ class Mask2FormerTrackHead(MaskFormerHead):
 
             for frame_id in range(self.num_frames):
                 cur_frame_gts = pair_gt_insatences[frame_id]
-                ins_ids = cur_frame_gts.instances_ids.tolist()
+                ins_ids = cur_frame_gts.instances_id.tolist()
                 for i, id in enumerate(ins_ids):
                     gt_masks_per_video[map_ins_id[id],
                                        frame_id, :, :] = cur_frame_gts.masks[i]
                     gt_ids_per_video[map_ins_id[id],
-                                     frame_id] = cur_frame_gts.instances_ids[i]
+                                     frame_id] = cur_frame_gts.instances_id[i]
                     gt_labels_per_video[
                         map_ins_id[id]] = cur_frame_gts.labels[i]
 

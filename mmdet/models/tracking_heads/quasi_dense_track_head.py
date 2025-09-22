@@ -113,8 +113,8 @@ class QuasiDenseTrackHead(BaseModule):
             else:
                 batch_gt_instances_ignore.append(None)
             # get gt_match_indices
-            ins_ids = key_data_sample.gt_instances.instances_ids.tolist()
-            ref_ins_ids = ref_data_sample.gt_instances.instances_ids.tolist()
+            ins_ids = key_data_sample.gt_instances.instances_id.tolist()
+            ref_ins_ids = ref_data_sample.gt_instances.instances_id.tolist()
             match_indices = Tensor([
                 ref_ins_ids.index(i) if (i in ref_ins_ids and i > 0) else -1
                 for i in ins_ids

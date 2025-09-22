@@ -119,9 +119,9 @@ class RoITrackHead(BaseModule, metaclass=ABCMeta):
             else:
                 batch_gt_instances_ignore.append(None)
 
-            gt_instance_ids.append(key_data_sample.gt_instances.instances_ids)
+            gt_instance_ids.append(key_data_sample.gt_instances.instances_id)
             ref_gt_instance_ids.append(
-                ref_data_sample.gt_instances.instances_ids)
+                ref_data_sample.gt_instances.instances_id)
 
         losses = dict()
         num_imgs = len(data_samples)

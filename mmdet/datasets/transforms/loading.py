@@ -929,7 +929,7 @@ class InferencerLoader(BaseTransform):
 @TRANSFORMS.register_module()
 class LoadTrackAnnotations(LoadAnnotations):
     """Load and process the ``instances`` and ``seg_map`` annotation provided
-    by dataset. It must load ``instances_ids`` which is only used in the
+    by dataset. It must load ``instances_id`` which is only used in the
     tracking tasks. The annotation format is as the following:
 
     .. code-block:: python

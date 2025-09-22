@@ -299,7 +299,7 @@ class QuasiDenseEmbedHead(BaseModule):
                 all images in a batch after sampling.
             ref_sampling_results (List[obj:SamplingResults]): Assign results of
                 all reference images in a batch after sampling.
-            gt_match_indices_list (list(Tensor)): Mapping from instances_ids
+            gt_match_indices_list (list(Tensor)): Mapping from instances_id
                 from key image to reference image of the same tracklet in a
                 pair of images.
 

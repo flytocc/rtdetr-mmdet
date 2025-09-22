@@ -179,7 +179,7 @@ class TestPackTrackInputs(unittest.TestCase):
             assert len(data_sample.gt_instances.masks) == 2
             assert (data_sample.gt_instances.labels.numpy() ==
                     self.gt_bboxes_labels[i]).all()
-            assert (data_sample.gt_instances.instances_ids.numpy() ==
+            assert (data_sample.gt_instances.instances_id.numpy() ==
                     self.gt_instances_ids[i]).all()
             for key in self.meta_keys:
                 assert data_sample.metainfo[key] == getattr(self, key)[i]
@@ -201,7 +201,7 @@ class TestPackTrackInputs(unittest.TestCase):
             assert len(data_sample.gt_instances.masks) == valid_len
             assert (data_sample.gt_instances.labels.numpy() ==
                     self.gt_bboxes_labels[i][valid_mask]).all()
-            assert (data_sample.gt_instances.instances_ids.numpy() ==
+            assert (data_sample.gt_instances.instances_id.numpy() ==
                     self.gt_instances_ids[i][valid_mask]).all()
             for key in self.meta_keys:
                 assert data_sample.metainfo[key] == getattr(self, key)[i]

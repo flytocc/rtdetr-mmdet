@@ -306,7 +306,7 @@ class PackTrackInputs(BaseTransform):
         'gt_bboxes': 'bboxes',
         'gt_bboxes_labels': 'labels',
         'gt_masks': 'masks',
-        'gt_instances_ids': 'instances_ids'
+        'gt_instances_ids': 'instances_id'
     }
 
     def __init__(self,
