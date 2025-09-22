@@ -301,7 +301,7 @@ class MOTChallengeMetric(BaseVideoMetric):
         dataset = [trackeval.datasets.MotChallenge2DBox(dataset_config)]
         metrics = [
             getattr(trackeval.metrics,
-                    metric)(dict(METRICS=[metric], THRESHOLD=0.5))
+                    metric)(dict(METRICS=[metric], THRESHOLD=self.track_iou_thr))
             for metric in self.metrics
         ]
         output_res, _ = evaluator.evaluate(dataset, metrics)
