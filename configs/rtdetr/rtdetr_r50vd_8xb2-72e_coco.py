@@ -128,7 +128,11 @@ train_pipeline = [
             type='MinIoURandomCrop', cover_all_box=False, trials=40),
         prob=0.8),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(type='Resize', scale=(640, 640), keep_ratio=False),
+    dict(
+        type='Resize',
+        scale=(640, 640),
+        keep_ratio=False,
+        interpolation='bicubic'),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
     dict(type='RandomFlip', prob=0.5),
     dict(type='PackDetInputs')
@@ -136,7 +140,11 @@ train_pipeline = [
 
 test_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
-    dict(type='Resize', scale=(640, 640), keep_ratio=False),
+    dict(
+        type='Resize',
+        scale=(640, 640),
+        keep_ratio=False,
+        interpolation='bicubic'),
     dict(type='LoadAnnotations', with_bbox=True),
     dict(
         type='PackDetInputs',
@@ -158,12 +166,8 @@ optim_wrapper = dict(
     optimizer=dict(type='AdamW', lr=0.0001, weight_decay=0.0001),
     clip_grad=dict(max_norm=0.1, norm_type=2),
     paramwise_cfg=dict(
-        custom_keys={
-            'backbone': dict(lr_mult=0.1),
-            'in_proj_bias': dict(decay_mult=0)
-        },
+        custom_keys={'backbone': dict(lr_mult=0.1)},
         norm_decay_mult=0,
-        bias_decay_mult=0,
         bypass_duplicate=True))
 
 # learning policy

@@ -178,7 +178,7 @@ def rtdetr_varifocal_loss(pred: Tensor,
     """
     # pred and target should be of the same size
     assert pred.size() == target.size()
-    pred_sigmoid = pred.sigmoid().detach()  # detach?
+    pred_sigmoid = pred.sigmoid()
     target = target.type_as(pred)
     if iou_weighted:
         focal_weight = target * (target > 0.0).float() + \

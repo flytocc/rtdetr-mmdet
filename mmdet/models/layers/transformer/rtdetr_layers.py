@@ -422,12 +422,6 @@ class RTDETRFPN(BaseModule):
                     norm_cfg=norm_cfg,
                     act_cfg=None))
 
-    def init_weights(self):
-        super().init_weights()
-        for m in self.out_convs.modules():
-            if isinstance(m, nn.Conv2d):
-                nn.init.xavier_uniform_(m.weight)
-
     def forward(self, inputs: Tuple[Tensor]) -> Tuple[Tensor]:
         """
         Args:

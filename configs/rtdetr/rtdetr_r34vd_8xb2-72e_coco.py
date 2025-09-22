@@ -17,13 +17,7 @@ model = dict(
 num_blocks_list = (3, 4, 6, 3)  # r34
 downsample_norm_idx_list = (2, 3, 3, 3)  # r34
 backbone_norm_multi = dict(lr_mult=0.1, decay_mult=0.0)
-custom_keys = {
-    'backbone': dict(lr_mult=0.1), 'in_proj_bias': dict(decay_mult=0)}
-custom_keys.update({
-    'backbone.stem.1': backbone_norm_multi,
-    'backbone.stem.4': backbone_norm_multi,
-    'backbone.stem.7': backbone_norm_multi,
-})
+custom_keys = {'backbone': dict(lr_mult=0.1)}
 custom_keys.update({
     f'backbone.layer{stage_id + 1}.{block_id}.bn': backbone_norm_multi
     for stage_id, num_blocks in enumerate(num_blocks_list)
