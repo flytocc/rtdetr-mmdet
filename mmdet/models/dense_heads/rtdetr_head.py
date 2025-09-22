@@ -32,8 +32,8 @@ class RTDETRHead(DINOHead):
     def split_outputs(all_layers_cls_scores: List[Tensor],
                       all_layers_bbox_preds: List[Tensor],
                       dn_meta: Dict[str, int]) -> Tuple[Tensor]:
-        num_denoising_queries = dn_meta['num_denoising_queries']
         if dn_meta is not None:
+            num_denoising_queries = dn_meta['num_denoising_queries']
             all_layers_denoising_cls_scores = \
                 [o[:, :num_denoising_queries] for o in all_layers_cls_scores]
             all_layers_denoising_bbox_preds = \

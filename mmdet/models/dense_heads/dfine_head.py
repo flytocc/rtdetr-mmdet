@@ -112,8 +112,8 @@ class DFINEHead(RTDETRHead):
          all_layers_denoising_bbox_preds) = RTDETRHead.split_outputs(
              all_layers_cls_scores, all_layers_bbox_preds, dn_meta)
 
-        num_denoising_queries = dn_meta['num_denoising_queries']
         if dn_meta is not None:
+            num_denoising_queries = dn_meta['num_denoising_queries']
             all_layers_denoising_bbox_corners = [
                 o[:, :num_denoising_queries]
                 for o in all_layers_outputs_corners
@@ -286,10 +286,6 @@ class DFINEHead(RTDETRHead):
              batch_gt_instances=batch_gt_instances,
              batch_img_metas=batch_img_metas)
 
-        (initial_dn_cls_scores,
-         *all_layers_denoising_cls_scores) = all_layers_denoising_cls_scores
-        (initial_dn_bbox_preds,
-         *all_layers_denoising_bbox_preds) = all_layers_denoising_bbox_preds
         (initial_cls_scores,
          *all_layers_matching_cls_scores) = all_layers_matching_cls_scores
         (initial_bbox_preds,
@@ -390,6 +386,11 @@ class DFINEHead(RTDETRHead):
             loss_dict['enc_loss_iou'] = enc_losses_iou
 
         if all_layers_denoising_cls_scores is not None:
+            (initial_dn_cls_scores,
+            *all_layers_denoising_cls_scores) = all_layers_denoising_cls_scores
+            (initial_dn_bbox_preds,
+            *all_layers_denoising_bbox_preds) = all_layers_denoising_bbox_preds
+
             dn_teacher_scores = all_layers_denoising_cls_scores[-1].detach()
             dn_teacher_corners = all_layers_denoising_bbox_corners[-1].detach()
             dn_teacher = (dn_teacher_scores, dn_teacher_corners)
