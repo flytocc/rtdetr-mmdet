@@ -4,9 +4,11 @@ from typing import Dict, List, Tuple
 import torch
 from torch import Tensor
 
+from mmcv.ops import batched_nms
 from mmdet.registry import MODELS
 from mmdet.structures.bbox import bbox_cxcywh_to_xyxy, bbox_overlaps
 from mmdet.utils import InstanceList, reduce_mean
+from mmengine.structures import InstanceData
 from ..losses import VarifocalLoss
 from .dino_head import DINOHead
 
@@ -250,3 +252,22 @@ class RTDETRHead(DINOHead):
         loss_bbox = self.loss_bbox(
             bbox_preds, bbox_targets, bbox_weights, avg_factor=num_total_pos)
         return loss_cls, loss_bbox, loss_iou
+
+    def _predict_by_feat_single(self,
+                                cls_score: Tensor,
+                                bbox_pred: Tensor,
+                                img_meta: dict,
+                                rescale: bool = True) -> InstanceData:
+        results = super()._predict_by_feat_single(
+            cls_score, bbox_pred, img_meta, rescale=rescale)
+
+        nms_cfg = self.test_cfg.get('nms', None)
+        if nms_cfg is not None:
+            _, keeps = batched_nms(
+                boxes=results.bboxes,
+                scores=results.scores,
+                idxs=results.labels,
+                nms_cfg=nms_cfg)
+            results = results[keeps]
+
+        return results
