@@ -1,9 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import io
 import os
 import os.path as osp
 import shutil
 import tempfile
 from collections import defaultdict
+from contextlib import redirect_stdout
 from typing import List, Optional, Union
 
 import numpy as np
@@ -304,7 +306,12 @@ class MOTChallengeMetric(BaseVideoMetric):
                     metric)(dict(METRICS=[metric], THRESHOLD=self.track_iou_thr))
             for metric in self.metrics
         ]
-        output_res, _ = evaluator.evaluate(dataset, metrics)
+
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            output_res, _ = evaluator.evaluate(dataset, metrics)
+        logger.info(buf.getvalue())
+
         output_res = output_res['MotChallenge2DBox'][
             self.TRACKER]['COMBINED_SEQ']['pedestrian']
 
