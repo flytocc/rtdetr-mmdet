@@ -977,11 +977,13 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             query_pos = query_pos.clamp(min=-10, max=10)
 
             # Adjust scale if needed for detachable wider layers
-            if lid > self.eval_idx and self.scaled_dim != query.size(-1):
-                query = F.interpolate(query, size=self.scaled_dim)
-                query_pos = F.interpolate(query_pos, size=self.scaled_dim)
-                value = F.interpolate(value, size=self.scaled_dim)
-                query_detach = query.detach()
+            if lid > self.eval_idx and self.scaled_dim != self.embed_dims:
+                if self.scaled_dim != query_pos.size(-1):
+                    query_pos = F.interpolate(query_pos, size=self.scaled_dim)
+                if self.scaled_dim != query.size(-1):
+                    query = F.interpolate(query, size=self.scaled_dim)
+                    value = F.interpolate(value, size=self.scaled_dim)
+                    query_detach = query.detach()
 
             query = layer(
                 query,
