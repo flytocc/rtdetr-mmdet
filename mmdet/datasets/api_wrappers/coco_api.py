@@ -7,18 +7,15 @@ from typing import List, Optional, Union
 
 try:
     pycocotools = None
-    import faster_coco_eval.core.mask as _maskUtils
     from faster_coco_eval.core.coco import COCO as _COCO
     from faster_coco_eval.core.faster_eval_api import COCOeval as _COCOeval
 except ImportError:
     import pycocotools
-    import pycocotools.mask as _maskUtils
     from pycocotools.coco import COCO as _COCO
     from pycocotools.cocoeval import COCOeval as _COCOeval
 
 # just for the ease of import
 COCOeval = _COCOeval
-maskUtils = _maskUtils
 
 
 class COCO(_COCO):

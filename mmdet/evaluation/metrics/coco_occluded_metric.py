@@ -8,8 +8,12 @@ from mmengine.logging import print_log
 from terminaltables import AsciiTable
 
 from mmdet.registry import METRICS
-from ...datasets.api_wrappers import maskUtils
 from .coco_metric import CocoMetric
+
+try:
+    import faster_coco_eval.core.mask as maskUtils
+except ImportError:
+    import pycocotools.mask as maskUtils
 
 
 @METRICS.register_module()
@@ -120,7 +124,7 @@ class CocoOccludedSeparatedMetric(CocoMetric):
         occluded_correct_num, occluded_recall = self.compute_recall(
             dict_det, gt_ann=self.occluded_ann, is_occ=True)
         print_log(
-            f'\nCOCO occluded mask recall: {occluded_recall:.2f}%',
+            f'\nCOCO occluded mask recall: {occluded_recall: .2f}%',
             logger='current')
         print_log(
             f'COCO occluded mask success num: {occluded_correct_num}',
@@ -129,15 +133,15 @@ class CocoOccludedSeparatedMetric(CocoMetric):
         separated_correct_num, separated_recall = self.compute_recall(
             dict_det, gt_ann=self.separated_ann, is_occ=False)
         print_log(
-            f'\nCOCO separated mask recall: {separated_recall:.2f}%',
+            f'\nCOCO separated mask recall: {separated_recall: .2f}%',
             logger='current')
         print_log(
             f'COCO separated mask success num: {separated_correct_num}',
             logger='current')
         table_data = [
             ['mask type', 'recall', 'num correct'],
-            ['occluded', f'{occluded_recall:.2f}%', occluded_correct_num],
-            ['separated', f'{separated_recall:.2f}%', separated_correct_num]
+            ['occluded', f'{occluded_recall: .2f}%', occluded_correct_num],
+            ['separated', f'{separated_recall: .2f}%', separated_correct_num]
         ]
         table = AsciiTable(table_data)
         print_log('\n' + table.table, logger='current')

@@ -32,7 +32,10 @@ from collections import defaultdict
 
 import numpy as np
 
-from ...datasets.api_wrappers import maskUtils
+try:
+    import faster_coco_eval.core.mask as maskUtils
+except ImportError:
+    import pycocotools.mask as maskUtils
 
 PYTHON_VERSION = sys.version_info[0]
 
