@@ -1115,12 +1115,14 @@ class PhotoMetricDistortion(BaseTransform):
                  contrast_range: Sequence[Number] = (0.5, 1.5),
                  saturation_range: Sequence[Number] = (0.5, 1.5),
                  hue_delta: int = 18,
+                 swap_channel: bool = True,
                  clip_val: int = -1,
                  force_float32: bool = True) -> None:
         self.brightness_delta = brightness_delta
         self.contrast_lower, self.contrast_upper = contrast_range
         self.saturation_lower, self.saturation_upper = saturation_range
         self.hue_delta = hue_delta
+        self.swap_channel = swap_channel
         self.clip_val = clip_val
         self.force_float32 = force_float32
 
@@ -1131,7 +1133,7 @@ class PhotoMetricDistortion(BaseTransform):
         contrast_flag = random.randint(2)
         saturation_flag = random.randint(2)
         hue_flag = random.randint(2)
-        swap_flag = random.randint(2)
+        swap_flag = random.randint(2) if self.swap_channel else 0
         delta_value = random.uniform(-self.brightness_delta,
                                      self.brightness_delta)
         alpha_value = random.uniform(self.contrast_lower, self.contrast_upper)
