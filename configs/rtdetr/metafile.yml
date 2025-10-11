@@ -44,6 +44,18 @@ Models:
           box AP: 48.9
     Weights: https://github.com/flytocc/mmdetection/releases/download/model_zoo/rtdetr_r34vd_8xb2-72e_coco_9159eb52.pth
 
+  - Name: rtdetr_r50vd_m_8xb2-72e_coco
+    In Collection: RT-DETR
+    Config: configs/rtdetr/rtdetr_r50vd_m_8xb2-72e_coco.py
+    Metadata:
+      Epochs: 72
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 51.3
+    Weights: https://github.com/flytocc/mmdetection/releases/download/model_zoo/rtdetr_r50vd_8xb2-72e_coco_ad2bdcfe.pth
+
   - Name: rtdetr_r50vd_8xb2-72e_coco
     In Collection: RT-DETR
     Config: configs/rtdetr/rtdetr_r50vd_8xb2-72e_coco.py
@@ -67,3 +79,27 @@ Models:
         Metrics:
           box AP: 54.3
     Weights: https://github.com/flytocc/mmdetection/releases/download/model_zoo/rtdetr_r101vd_8xb2-72e_coco_83ad1b19.pth
+
+  - Name: rtdetr_hgnetv2_l_8xb2-72e_coco
+    In Collection: RT-DETR
+    Config: configs/rtdetr/rtdetr_hgnetv2_l_8xb2-72e_coco.py
+    Metadata:
+      Epochs: 72
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 53.0
+    Weights: https://github.com/flytocc/mmdetection/releases/download/model_zoo/rtdetr_hgnetv2_l_8xb2-72e_coco_dfef6adf.pth
+
+  - Name: rtdetr_hgnetv2_x_8xb2-72e_coco
+    In Collection: RT-DETR
+    Config: configs/rtdetr/rtdetr_hgnetv2_x_8xb2-72e_coco.py
+    Metadata:
+      Epochs: 72
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 54.8
+    Weights: https://github.com/flytocc/mmdetection/releases/download/model_zoo/rtdetr_hgnetv2_x_8xb2-72e_coco_44ab948e.pth

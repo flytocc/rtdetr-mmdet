@@ -14,5 +14,4 @@ model = dict(
 
 # optimizer
 optim_wrapper = dict(
-    paramwise_cfg=dict(
-        custom_keys={'backbone': dict(lr_mult=0.01)}, norm_decay_mult=1))
+    paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.01)}))
