@@ -18,7 +18,7 @@ model = dict(
             dict(
                 type='BatchSyncRandomResize',
                 interval=1,
-                interpolations='nearest',
+                interpolations=['nearest', 'bilinear', 'bicubic', 'area'],
                 random_sizes=[480, 512, 544, 576, 608] +
                 [640] * base_size_repeat + [672, 704, 736, 768, 800])
         ],
@@ -43,14 +43,7 @@ model = dict(
         out_channels=256,
         act_cfg=None,
         norm_cfg=dict(type='BN', requires_grad=True),  # GN for DINO
-        num_outs=3,  # 4 for DINO
-        init_cfg=dict(
-            type='Kaiming',
-            layer='Conv2d',
-            a=5**0.5,
-            distribution='uniform',
-            mode='fan_in',
-            nonlinearity='leaky_relu')),
+        num_outs=3),  # 4 for DINO
     encoder=dict(
         use_encoder_idx=[-1],
         num_encoder_layers=1,
@@ -113,14 +106,19 @@ model = dict(
 
 # train_pipeline, NOTE the img_scale and the Pad's size_divisor is different
 # from the default setting in mmdet.
+interpolations = ['nearest', 'bilinear', 'bicubic', 'area', 'lanczos']
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
     dict(type='LoadAnnotations', with_bbox=True),
     dict(
-        type='PhotoMetricDistortion',
-        hue_delta=12.75,
-        clip_val=255,
-        force_float32=False),
+        type='RandomApply',
+        transforms=dict(
+            type='PhotoMetricDistortion',
+            hue_delta=12.75,
+            swap_channel=False,
+            clip_val=255,
+            force_float32=False),
+        prob=0.8),
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',
@@ -129,10 +127,14 @@ train_pipeline = [
         prob=0.8),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
     dict(
-        type='Resize',
-        scale=(640, 640),
-        keep_ratio=False,
-        interpolation='bicubic'),
+        type='RandomChoice',
+        transforms=[[
+            dict(
+                type='Resize',
+                scale=(640, 640),
+                keep_ratio=False,
+                interpolation=interpolation)
+        ] for interpolation in interpolations]),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
     dict(type='RandomFlip', prob=0.5),
     dict(type='PackDetInputs')
@@ -153,10 +155,10 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_sampler=None,
+    batch_sampler=None,  # fixed img size does not need AspectRatioBatchSampler
     drop_last=True,
     pin_memory=True,
-    dataset=dict(filter_cfg=None, pipeline=train_pipeline))
+    dataset=dict(pipeline=train_pipeline))
 val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
