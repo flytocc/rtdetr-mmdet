@@ -30,7 +30,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 42.8
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_n_8xb16-160e_coco-28670255.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_n_8xb16-160e_coco_15dd61d6.pth
 
   - Name: dfine_hgnetv2_s_8xb4-132e_coco
     In Collection: D-FINE
@@ -42,7 +42,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 48.6
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_s_8xb4-132e_coco-92a02f6b.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_s_8xb4-132e_coco_31058e0c.pth
 
   - Name: dfine_hgnetv2_m_8xb4-132e_coco
     In Collection: D-FINE
@@ -54,7 +54,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 52.3
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_m_8xb4-132e_coco-4e1ed82e.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_m_8xb4-132e_coco_477d6cb3.pth
 
   - Name: dfine_hgnetv2_l_8xb4-80e_coco
     In Collection: D-FINE
@@ -66,7 +66,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 54.0
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_l_8xb4-80e_coco-d95a9b4d.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_l_8xb4-80e_coco_e156745c.pth
 
   - Name: dfine_hgnetv2_x_8xb4-80e_coco
     In Collection: D-FINE
@@ -78,4 +78,4 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 55.8
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_x_8xb4-80e_coco-68297f9.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/dfine/dfine_hgnetv2_x_8xb4-80e_coco_b517c835.pth

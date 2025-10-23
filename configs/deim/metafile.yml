@@ -30,7 +30,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 43.0
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_n_8xb16-160e_coco-3059c466.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_n_8xb16-160e_coco_05240613.pth
 
   - Name: deim_hgnetv2_s_8xb4-132e_coco
     In Collection: DEIM
@@ -42,7 +42,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 48.9
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_s_8xb4-132e_coco-4636f228.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_s_8xb4-132e_coco_3223931d.pth
 
   - Name: deim_hgnetv2_m_8xb4-102e_coco
     In Collection: DEIM
@@ -54,7 +54,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 52.6
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_m_8xb4-102e_coco-dbabaa17.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_m_8xb4-102e_coco_9177d39b.pth
 
   - Name: deim_hgnetv2_l_8xb4-58e_coco
     In Collection: DEIM
@@ -66,7 +66,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 54.7
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_l_8xb4-58e_coco-3e610e77.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_l_8xb4-58e_coco_a40a02d4.pth
 
   - Name: deim_hgnetv2_x_8xb4-58e_coco
     In Collection: DEIM
@@ -78,7 +78,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 56.4
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_x_8xb4-58e_coco-d0f10c82.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_x_8xb4-58e_coco_6e117f09.pth
 
   - Name: deim_r18vd_8xb2-120e_coco
     In Collection: DEIM
@@ -90,7 +90,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 49.1
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r18vd_8xb2-120e_coco-ea4e4b74.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r18vd_8xb2-120e_coco_d988bf0e.pth
 
   - Name: deim_r34vd_8xb2-120e_coco
     In Collection: DEIM
@@ -102,7 +102,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 51.0
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r34vd_8xb2-120e_coco-bbfde84a.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r34vd_8xb2-120e_coco_dc2f60e5.pth
 
   - Name: deim_r50vd_8xb2-60e_coco
     In Collection: DEIM
@@ -114,7 +114,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 54.3
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r50vd_8xb2-60e_coco-e9b359d3.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r50vd_8xb2-60e_coco_5bafcf68.pth
 
   - Name: deim_r50vd_m_8xb2-60e_coco
     In Collection: DEIM
@@ -126,7 +126,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 53.2
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r50vd_m_8xb2-60e_coco-c6f9b0b2.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r50vd_m_8xb2-60e_coco_cafc7012.pth
 
   - Name: deim_r101vd_8xb2-60e_coco
     In Collection: DEIM
@@ -138,4 +138,4 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 55.5
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r101vd_8xb2-60e_coco-bc315c3d.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_r101vd_8xb2-60e_coco_a21cfc8a.pth

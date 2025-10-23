@@ -30,7 +30,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 48.1
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r18vd_8xb2-120e_coco_0bf0bd2e.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r18vd_8xb2-120e_coco_caff108e.pth
 
   - Name: rtdetrv2_r34vd_8xb2-120e_coco.py
     In Collection: RT-DETR v2
@@ -42,7 +42,19 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 49.9
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r34vd_8xb2-120e_coco_551fe05a.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r34vd_8xb2-120e_coco_bfca80f4.pth
+
+  - Name: rtdetrv2_r50vd_m_8xb2-84e_coco.py
+    In Collection: RT-DETR v2
+    Config: configs/rtdetrv2/rtdetrv2_r50vd_m_8xb2-84e_coco.py
+    Metadata:
+      Epochs: 84
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 52.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r50vd_m_8xb2-84e_coco_6592e764.pth
 
   - Name: rtdetrv2_r50vd_8xb2-72e_coco.py
     In Collection: RT-DETR v2
@@ -54,7 +66,7 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 53.4
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r50vd_8xb2-72e_coco_363db2ca.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r50vd_8xb2-72e_coco_4a8ad7df.pth
 
   - Name: rtdetrv2_r101vd_8xb2-72e_coco.py
     In Collection: RT-DETR v2
@@ -66,4 +78,4 @@ Models:
         Dataset: COCO
         Metrics:
           box AP: 54.4
-    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r101vd_8xb2-72e_coco_0ecd9142.pth
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r101vd_8xb2-72e_coco_f06ee977.pth
