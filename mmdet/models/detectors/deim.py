@@ -11,7 +11,7 @@ from .rtdetr import RTDETR
 
 class DEIMMixin:
     r"""Implementation of `DEIM: DETR with Improved Matching for Fast
-    Convergence' <https://arxiv.org/abs/2412.04234>`_
+    Convergence <https://arxiv.org/abs/2412.04234>`_
 
     Code is modified from the `official github repo
     <https://github.com/ShihuaHuang95/DEIM>`_.

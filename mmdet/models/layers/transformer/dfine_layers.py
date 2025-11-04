@@ -30,6 +30,7 @@ class RepNCSPELAN4(BaseModule):
     def __init__(self,
                  in_channels: int,
                  out_channels: int,
+                 hidden_channels: Optional[int] = None,
                  expand_ratio: float = 1.0,
                  num_blocks: int = 3,
                  conv_cfg: OptConfigType = None,
@@ -37,17 +38,18 @@ class RepNCSPELAN4(BaseModule):
                  act_cfg: OptConfigType = dict(type='SiLU', inplace=True),
                  init_cfg: OptMultiConfig = None) -> None:
         super().__init__(init_cfg=init_cfg)
+        hidden_channels = hidden_channels or in_channels
         mid_channels = int(out_channels * expand_ratio // 2)
         self.cv1 = ConvModule(
             in_channels,
-            in_channels,
+            hidden_channels,
             1,
             conv_cfg=conv_cfg,
             norm_cfg=norm_cfg,
             act_cfg=act_cfg)
         self.cv2 = nn.Sequential(
             CSPLayer(
-                in_channels // 2,
+                hidden_channels // 2,
                 mid_channels,
                 expand_ratio=1.0,
                 num_blocks=num_blocks,
@@ -80,7 +82,7 @@ class RepNCSPELAN4(BaseModule):
                 norm_cfg=norm_cfg,
                 act_cfg=act_cfg))
         self.cv4 = ConvModule(
-            in_channels + mid_channels * 2,
+            hidden_channels + mid_channels * 2,
             out_channels,
             1,
             conv_cfg=conv_cfg,
@@ -137,7 +139,7 @@ class DFINEFPN(RTDETRFPN):
             mode='fan_in',
             nonlinearity='leaky_relu')
     ) -> None:
-        super().__init__(init_cfg=init_cfg)
+        super(RTDETRFPN, self).__init__(init_cfg=init_cfg)
         self.in_channels = in_channels
         self.out_channels = out_channels
 

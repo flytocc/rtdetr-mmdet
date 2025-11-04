@@ -1,0 +1,111 @@
+_base_ = '../deim/deim_hgnetv2_l_8xb4-58e_coco.py'
+
+pretrained = 'dinov3_vits16_pretrain_lvd1689m-08c60483.pth'
+
+base_size_repeat = 3
+
+model = dict(
+    type='DEIMV2',
+    data_preprocessor=dict(
+        batch_augments=[
+            dict(
+                type='BatchSyncRandomResize',
+                interval=1,
+                interpolations='nearest',
+                random_sizes=[480, 512, 544, 576, 608] + [
+                    640] * base_size_repeat + [672, 704, 736, 768, 800])
+        ],
+        mean=[123.675, 116.28, 103.53],
+        std=[58.395, 57.12, 57.375]),
+    backbone=dict(
+        _delete_=True,
+        type='DINOv3STAs',
+        name='dinov3_vits16',
+        weights_path=pretrained,
+        interaction_indexes=[5, 8, 11],  # only need the [1/8, 1/16, 1/32]
+        finetune=True,
+        conv_inplane=32,
+        hidden_dim=224),
+    neck=None,
+    encoder=dict(
+        in_channels=[224, 224, 224],
+        fpn_cfg=dict(
+            type='DEIMV2FPN',
+            fuse_type='sum',
+            in_channels=[224, 224, 224],
+            out_channels=224),
+        layer_cfg=dict(
+            self_attn_cfg=dict(embed_dims=224),
+            ffn_cfg=dict(embed_dims=224, feedforward_channels=896))),
+    decoder=dict(
+        ref_hidden_dim=224,
+        ref_num_layers=3,
+        num_layers=4,
+        layer_cfg=dict(
+            self_attn_cfg=dict(embed_dims=224),
+            cross_attn_cfg=dict(embed_dims=224),
+            ffn_cfg=dict(
+                _delete_=True,
+                embed_dims=224,
+                feedforward_channels=896))),  # SwiGLUFFN
+    bbox_head=dict(embed_dims=224))
+
+# learning policy
+max_epochs = 68
+train_cfg = dict(max_epochs=max_epochs)
+
+_base_.data_preprocessor_stage2.mean = _base_.data_preprocessor_stage3.mean = \
+    _base_.data_preprocessor_stage4.mean = [123.675, 116.28, 103.53]
+_base_.data_preprocessor_stage2.std = _base_.data_preprocessor_stage3.std = \
+    _base_.data_preprocessor_stage4.std =[58.395, 57.12, 57.375]
+
+stage2_switch_epoch = 4
+stage3_switch_epoch = 34
+stage4_switch_epoch = 60
+custom_hooks = [
+    dict(
+        type='EMADynamicMomentumHook',
+        restart_epoch=stage4_switch_epoch,
+        ema_type='ExpMomentumEMA',
+        momentum=0.0001,
+        gamma=1000,
+        update_buffers=True,
+        priority=49),
+    dict(
+        type='PipelineSwitchHook',
+        switch_epoch=stage2_switch_epoch,
+        switch_pipeline=_base_.train_pipeline_stage2),
+    dict(
+        type='PipelineSwitchHook',
+        switch_epoch=stage3_switch_epoch,
+        switch_pipeline=_base_.train_pipeline_stage3),
+    dict(
+        type='PipelineSwitchHook',
+        switch_epoch=stage4_switch_epoch,
+        switch_pipeline=_base_.train_pipeline_stage4),
+    dict(
+        type='DataPreprocessorSwitchHook',
+        switch_epoch=stage2_switch_epoch,
+        switch_data_preprocessor=_base_.data_preprocessor_stage2),
+    dict(
+        type='DataPreprocessorSwitchHook',
+        switch_epoch=stage3_switch_epoch,
+        switch_data_preprocessor=_base_.data_preprocessor_stage3),
+    dict(
+        type='DataPreprocessorSwitchHook',
+        switch_epoch=stage4_switch_epoch,
+        switch_data_preprocessor=_base_.data_preprocessor_stage4)
+]
+
+param_scheduler = [
+    dict(type='QuadraticWarmupLR', by_epoch=False, begin=0, end=2000),
+    dict(
+        type='CosineAnnealingLR',
+        begin=stage3_switch_epoch,
+        end=stage4_switch_epoch,
+        by_epoch=True,
+        eta_min_ratio=0.5,
+        convert_to_iter_based=True),
+    dict(
+        type='ConstantLR', by_epoch=True, factor=1, begin=stage4_switch_epoch)
+]

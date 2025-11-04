@@ -29,6 +29,7 @@ from .transformer import (MLP, AdaptivePadding, CdnQueryGenerator,
                           DeformableDetrTransformerDecoderLayer,
                           DeformableDetrTransformerEncoder,
                           DeformableDetrTransformerEncoderLayer,
+                          DEIMV2TransformerDecoder,
                           DetrTransformerDecoder, DetrTransformerDecoderLayer,
                           DetrTransformerEncoder, DetrTransformerEncoderLayer,
                           DFINECdnQueryGenerator, DFINETransformerDecoder,
@@ -66,5 +67,6 @@ __all__ = [
     'Mask2FormerTransformerDecoderLayer', 'Mask2FormerTransformerDecoder',
     'SinePositionalEncoding3D', 'FrozenBatchNorm2d', 'RTDETRHybridEncoder',
     'RTDETRTransformerDecoder', 'RTDETRTransformerDecoderV2',
-    'DFINECdnQueryGenerator', 'DFINETransformerDecoder'
+    'DFINECdnQueryGenerator', 'DFINETransformerDecoder',
+    'DEIMV2TransformerDecoder'
 ]
