@@ -1,8 +1,10 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import random
+from collections import defaultdict
 from numbers import Number
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import List, Literal, Optional, Sequence, Tuple, Union
 
+import mmengine
 import numpy as np
 import torch
 import torch.nn as nn
@@ -868,12 +870,12 @@ class BatchMixup(nn.Module):
                         data_samples[i].ignored_instances,
                         shifted_samples[i].ignored_instances,
                     ]))
-                if 'proposals' in data_samples:
+                if 'proposals' in data_samples[i]:
                     mixup_data_sample.proposals = InstanceData.cat([
                         data_samples[i].proposals,
                         shifted_samples[i].proposals,
                     ])
-                if 'gt_seg_map' in data_samples:
+                if 'gt_seg_map' in data_samples[i]:
                     mixup_data_sample.gt_seg_map = InstanceData.cat([
                         data_samples[i].gt_seg_map,
                         shifted_samples[i].gt_seg_map,
@@ -883,3 +885,210 @@ class BatchMixup(nn.Module):
             data_samples = mixup_data_samples
 
         return inputs, data_samples
+
+
+@MODELS.register_module()
+class BatchRandomChoice(nn.Module):
+    """Process data with a randomly chosen batch augment from given candidates.
+
+    Args:
+        transforms (list[list]): A list of batch augment candidates,
+            each is a sequence of batch augment.
+        prob (list[float], optional): The probabilities associated
+            with each pipeline. The length should be equal to the pipeline
+            number and the sum should be 1. If not given, a uniform
+            distribution will be assumed.
+
+    Examples:
+        >>> # config
+        >>> batch_augments = [
+        >>>     dict(type='BatchRandomChoice',
+        >>>         transforms=[
+        >>>             [dict(type='BatchMixup')],  # subpipeline 1
+        >>>             [dict(type='BatchCopyBlend')],  # subpipeline 2
+        >>>         ]
+        >>>     )
+        >>> ]
+    """
+
+    def __init__(self,
+                 transforms: List[Union[nn.Module, List[nn.Module]]],
+                 prob: Optional[List[float]] = None):
+
+        super().__init__()
+
+        if prob is not None:
+            assert mmengine.is_seq_of(prob, float)
+            assert len(transforms) == len(prob), \
+                '``transforms`` and ``prob`` must have same lengths. ' \
+                f'Got {len(transforms)} vs {len(prob)}.'
+            assert sum(prob) == 1
+
+        self.prob = prob
+        self.transforms = nn.ModuleList()
+        for aug in transforms:
+            if not isinstance(aug, Sequence):
+                aug = [aug]
+            self.transforms.append(nn.ModuleList(
+                [MODELS.build(transform) for transform in aug]))
+
+    def forward(
+        self, inputs: Tensor, data_samples: List[DetDataSample]
+    ) -> Tuple[Tensor, List[DetDataSample]]:
+        indices = np.arange(len(self.transforms))
+        idx = np.random.choice(indices, p=self.prob)
+        for transform in self.transforms[idx]:
+            inputs, data_samples = transform(inputs, data_samples)
+        return inputs, data_samples
+
+
+@MODELS.register_module()
+class BatchCopyBlend(nn.Module):
+    """Applies CopyBlend augmentation to the batch.
+
+    Args:
+        prob (float): Probability of applying this transformation.
+            Defaults to 1.0.
+    """
+
+    def __init__(self, 
+                 copyblend_type: Literal['blend', 'copy'] = 'blend',
+                 area_threshold: float = 100,
+                 num_objects: int = 3,
+                 random_num_objects: bool = False,
+                 with_expand: bool = False,
+                 expand_ratios: Tuple[float, float] = [0.1, 0.25],
+                 ratio_range: Tuple[float, float] = (0.45, 0.55),
+                 prob: float = 1.0) -> None:
+        super().__init__()
+        assert copyblend_type in ['blend', 'copy'], \
+            f'Unsupported copyblend_type {copyblend_type}.' \
+            'Supported types are "blend" and "copy".'
+        self.copyblend_type = copyblend_type
+        self.area_threshold = area_threshold
+        self.num_objects = num_objects
+        self.random_num_objects = random_num_objects
+        self.with_expand = with_expand
+        self.expand_ratios = expand_ratios
+        self.ratio_range = ratio_range
+        self.prob = prob
+
+    def forward(
+        self, inputs: Tensor, data_samples: List[DetDataSample]
+    ) -> Tuple[Tensor, List[DetDataSample]]:
+        if random.uniform(0, 1) > self.prob:
+            return inputs, data_samples
+
+        batch_size, _, img_height, img_width = inputs.shape
+
+        # get all valid objects in batch
+        bboxes = torch.cat(
+            [data_samples[i].gt_instances.bboxes for i in range(batch_size)])
+        areas = (bboxes[..., 2:] - bboxes[..., :2]).prod(dim=-1)
+        keep = areas >= self.area_threshold
+
+        # check if objects_pool is empty
+        if not keep.any():
+            return inputs, data_samples
+
+        labels = torch.cat(
+            [data_samples[i].gt_instances.labels for i in range(batch_size)])
+        image_idx = torch.cat(
+            [torch.full((len(data_samples[i].gt_instances),), i)
+             for i in range(batch_size)])
+
+        objects_pool = defaultdict(list)
+        objects_pool['boxes'] = bboxes[keep].long().tolist()
+        objects_pool['image_idx'] = image_idx[keep.cpu()].tolist()
+        objects_pool['labels'] = labels[keep]
+
+        # Generate mixup ratio
+        beta = round(random.uniform(*self.ratio_range), 6)
+
+        # apply CopyBlend
+        batch_size = len(inputs)
+        updated_inputs = inputs.clone()
+        updated_targets = data_samples.copy()
+
+        for i in range(batch_size):
+            # randomly decide the number of objects to blend
+            if self.random_num_objects:
+                num_objects = random.randint(1, min(self.num_objects, len(objects_pool['boxes'])))
+            else:
+                num_objects = min(self.num_objects, len(objects_pool['boxes']))
+
+            # randomly select objects to blend
+            selected_indices = random.sample(range(len(objects_pool['boxes'])), num_objects)
+
+            blend_boxes = []
+            blend_labels = []
+
+            for idx in selected_indices:
+                # get source object information
+                box = objects_pool['boxes'][idx]
+                label = objects_pool['labels'][idx]
+                source_idx = objects_pool['image_idx'][idx]
+
+                # calculate source object size and position
+                x1_src, x2_src, y1_src, y2_src = box
+
+                # check if source object is out of bound
+                x1_src, y1_src = max(x1_src, 0), max(y1_src, 0)
+                x2_src, y2_src = min(x2_src, img_width), min(y2_src, img_height)
+                new_w_px, new_h_px = x2_src - x1_src, y2_src - y1_src
+
+                # check if source object is valid
+                if new_w_px <= 0 or new_h_px <= 0:
+                    continue
+
+                # randomly determine blend position
+                x1 = random.randint(0, img_width - new_w_px) if new_w_px < img_width else 0
+                y1 = random.randint(0, img_height - new_h_px) if new_h_px < img_height else 0
+
+                # after the above limit, [x2, y2] will not be out of bound, so no need to check
+                x2, y2 = x1 + new_w_px, y1 + new_h_px
+
+                # add to blend list - use original unexpanded box
+                blend_boxes.append(torch.tensor([x1, y1, x2, y2]))
+                blend_labels.append(label)
+
+                # handle expanded area
+                if self.with_expand:
+                    alpha = round(random.uniform(self.expand_ratios[0], self.expand_ratios[1]), 6)
+                    expand_w, expand_h = int(new_w_px * alpha), int(new_h_px * alpha)
+
+                    # check if out of bound: get the best offset in GT image
+                    x1_expand, y1_expand = x1_src - max(x1_src - expand_w, 0), y1_src - max(y1_src - expand_h, 0)
+                    x2_expand, y2_expand = min(x2_src + expand_w, img_width) - x2_src, min(y2_src + expand_h, img_height) - y2_src
+
+                    # check if out of bound: whether the expanded area is out of bound in blend image
+                    new_x1_expand, new_y1_expand = x1 - max(x1 - x1_expand, 0), y1 - max(y1 - y1_expand, 0)
+                    new_x2_expand, new_y2_expand = min(x2 + x2_expand, img_width) - x2, min(y2 + y2_expand, img_height) - y2
+
+                    # update
+                    x1_src, y1_src, x2_src, y2_src = x1_src - new_x1_expand, y1_src - new_y1_expand, x2_src + new_x2_expand, y2_src + new_y2_expand
+                    x1, y1, x2, y2 = x1 - new_x1_expand, y1 - new_y1_expand, x2 + new_x2_expand, y2 + new_y2_expand
+
+                # blend original area first
+                copy_patch_orig = inputs[source_idx, :, y1_src:y2_src, x1_src:x2_src]
+                if self.copyblend_type == 'blend':
+                    blended_patch = updated_inputs[i, :, y1:y2, x1:x2] * beta + copy_patch_orig * (1 - beta)
+                    updated_inputs[i, :, y1:y2, x1:x2] = blended_patch
+                else:
+                    updated_inputs[i, :, y1:y2, x1:x2] = copy_patch_orig
+
+            # add blended objects to targets
+            if len(blend_boxes) > 0:
+                blend_boxes = torch.stack(blend_boxes).to(
+                    updated_targets[i].gt_instances.bboxes.device)
+                blend_labels = torch.stack(blend_labels)
+
+                # update targets
+                updated_targets[i].gt_instances = InstanceData.cat([
+                    updated_targets[i].gt_instances,
+                    InstanceData(bboxes=blend_boxes, labels=blend_labels)
+                ])
+                assert 'proposals' not in data_samples[i]
+                assert 'gt_seg_map' not in data_samples[i]
+
+        return updated_inputs, updated_targets

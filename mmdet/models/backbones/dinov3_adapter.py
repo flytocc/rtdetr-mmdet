@@ -89,7 +89,7 @@ class DINOv3STAs(nn.Module):
             self.dinov3 = DinoVisionTransformer(name=name)
             if weights_path is not None and os.path.exists(weights_path):
                 print(f'Loading ckpt from {weights_path}...')
-                self.dinov3.load_state_dict(torch.load(weights_path))
+                self.dinov3.load_state_dict(torch.load(weights_path, map_location='cpu'))
             else:
                 print('Training DINOv3 from scratch...')
         else:
