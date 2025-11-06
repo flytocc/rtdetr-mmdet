@@ -233,7 +233,6 @@ class DEIMV2FPN(DFINEFPN):
         return tuple(outs)
 
 
-@MODELS.register_module()
 class RMSNorm(nn.Module):
 
     def __init__(self, num_features: int, eps: float = 1e-6):
@@ -298,7 +297,7 @@ class DEIMV2TransformerDecoderLayer(DFINETransformerDecoderLayer):
                  ffn_cfg: OptConfigType = dict(
                      embed_dims=256,
                      feedforward_channels=512),
-                 norm_cfg: OptConfigType = dict(type='RMSNorm', eps=1e-6),
+                 norm_cfg: OptConfigType = dict(type=RMSNorm, eps=1e-6),
                  **kwargs) -> None:
         self.use_gateway = use_gateway
         super().__init__(*args, ffn_cfg=ffn_cfg, norm_cfg=norm_cfg, **kwargs)
@@ -517,6 +516,7 @@ class DEIMV2TransformerDecoder(DFINETransformerDecoder):
 
         for lid, layer in enumerate(self.layers):
             reference_points_input = reference_points[:, :, None]
+            # diff here
             # query_pos = self.ref_point_head(reference_points)
             # query_pos = query_pos.clamp(min=-10, max=10)
 
@@ -526,8 +526,9 @@ class DEIMV2TransformerDecoder(DFINETransformerDecoder):
                     query_pos = F.interpolate(query_pos, size=self.scaled_dim)
                 if self.scaled_dim != query.size(-1):
                     query = F.interpolate(query, size=self.scaled_dim)
-                    value = F.interpolate(value, size=self.scaled_dim)
                     query_detach = query.detach()
+                if self.scaled_dim != value.size(-1):
+                    value = F.interpolate(value, size=self.scaled_dim)
 
             query = layer(
                 query,

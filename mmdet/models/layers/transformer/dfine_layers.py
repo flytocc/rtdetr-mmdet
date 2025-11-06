@@ -986,8 +986,9 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                     query_pos = F.interpolate(query_pos, size=self.scaled_dim)
                 if self.scaled_dim != query.size(-1):
                     query = F.interpolate(query, size=self.scaled_dim)
-                    value = F.interpolate(value, size=self.scaled_dim)
                     query_detach = query.detach()
+                if self.scaled_dim != value.size(-1):
+                    value = F.interpolate(value, size=self.scaled_dim)
 
             query = layer(
                 query,

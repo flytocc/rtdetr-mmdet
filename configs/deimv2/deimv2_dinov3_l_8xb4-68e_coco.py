@@ -1,72 +1,51 @@
-_base_ = '../deim/deim_hgnetv2_l_8xb4-58e_coco.py'
+_base_ = '../deimv2/deimv2_dinov3_x_8xb4-58e_coco.py'
 
 pretrained = 'dinov3_vits16_pretrain_lvd1689m-08c60483.pth'
 
-base_size_repeat = 3
+num_layers = 4
 
 model = dict(
-    type='DEIMV2',
-    data_preprocessor=dict(
-        batch_augments=[
-            dict(
-                type='BatchSyncRandomResize',
-                interval=1,
-                interpolations='nearest',
-                random_sizes=[480, 512, 544, 576, 608] +
-                [640] * base_size_repeat + [672, 704, 736, 768, 800])
-        ],
-        mean=[123.675, 116.28, 103.53],
-        std=[58.395, 57.12, 57.375]),
     backbone=dict(
-        _delete_=True,
-        type='DINOv3STAs',
         name='dinov3_vits16',
         weights_path=pretrained,
-        interaction_indexes=[5, 8, 11],  # only need the [1/8, 1/16, 1/32]
-        finetune=True,
         conv_inplane=32,
         hidden_dim=224),
-    neck=None,
     encoder=dict(
         in_channels=[224, 224, 224],
         fpn_cfg=dict(
-            type='DEIMV2FPN',
-            fuse_type='sum',
             in_channels=[224, 224, 224],
-            out_channels=224),
+            out_channels=224,
+            expansion=1.0,
+            num_csp_blocks=3),
         layer_cfg=dict(
             self_attn_cfg=dict(embed_dims=224),
             ffn_cfg=dict(embed_dims=224, feedforward_channels=896))),
     decoder=dict(
         ref_hidden_dim=224,
-        ref_num_layers=3,
-        num_layers=4,
+        num_layers=num_layers,
         layer_cfg=dict(
             self_attn_cfg=dict(embed_dims=224),
             cross_attn_cfg=dict(embed_dims=224),
             ffn_cfg=dict(
-                _delete_=True, embed_dims=224,
+                embed_dims=224,
                 # the implementation is different from official DEIMV2 repo
                 # `feedforward_channels` shuold be half of that in official
                 feedforward_channels=896))),  # SwiGLUFFN
     bbox_head=dict(embed_dims=224),
-    train_cfg=dict(
-        switch_assigner=dict(
-            switch_epoch=50,
-            assigner=dict(
-                type='HungarianAssigner',
-                match_costs=[
-                    dict(
-                        type='DEIMV2LossCost', iou_order_alpha=4.0, weight=1.)
-                ]))))
+    train_cfg=dict(switch_assigner=dict(switch_epoch=50)))
 
 custom_keys = {
-    'backbone.dinov3': dict(lr_mult=0.025),
-    'backbone.sta.stem.1.bias': dict(decay_mult=0),
-    'backbone.sta.conv2.1.bias': dict(decay_mult=0),
-    'backbone.sta.conv3.2.bias': dict(decay_mult=0),
-    'backbone.sta.conv4.2.bias': dict(decay_mult=0),
     'in_proj_bias': dict(decay_mult=0),
+    'backbone.dinov3': dict(lr_mult=0.025),
+    'backbone.dinov3.norm.weight': dict(lr_mult=0.025, decay_mult=0),
+    'backbone.dinov3.norm.bias': dict(lr_mult=0.025, decay_mult=0),
+    'backbone.dinov3.patch_embed.proj.bias': dict(lr_mult=0.025, decay_mult=0),
+    # TODO the following norm layers' weight will apply weight decay
+    # 'backbone.norms': dict(decay_mult=1),
+    # 'backbone.sta.stem.1.weight': dict(decay_mult=1),
+    # 'backbone.sta.conv2.1.weight': dict(decay_mult=1),
+    # 'backbone.sta.conv3.2.weight': dict(decay_mult=1),
+    # 'backbone.sta.conv4.2.weight': dict(decay_mult=1),
 }
 custom_keys.update({
     f'backbone.dinov3.blocks.{bid}.{name}': dict(lr_mult=0.025, decay_mult=0)
@@ -76,124 +55,19 @@ custom_keys.update({
         'mlp.fc1.bias', 'mlp.fc2.bias'
     ] for bid in range(12)
 })
+custom_keys.update({
+    f'decoder.layers.{lid}.norms.{i}.scale': dict(decay_mult=0)
+    for lid in range(num_layers) for i in range(3)
+})
 
 # optimizer
 optim_wrapper = dict(
-    paramwise_cfg=dict(
-        custom_keys=dict(_delete_=True, **custom_keys), bias_decay_mult=0))
+    paramwise_cfg=dict(custom_keys=dict(_delete_=True, **custom_keys)))
 
 # learning policy
 max_epochs = 68
 train_cfg = dict(max_epochs=max_epochs)
 
-train_pipeline_stage2 = [
-    dict(
-        type='RandomChoice',
-        transforms=[
-            [
-                dict(
-                    type='PhotoMetricDistortion',
-                    hue_delta=12.75,
-                    clip_val=255,
-                    force_float32=False),
-                dict(type='Expand', mean=[0, 0, 0]),
-                dict(
-                    type='RandomApply',
-                    transforms=dict(
-                        type='MinIoURandomCrop',
-                        cover_all_box=False,
-                        trials=40),
-                    prob=0.8),
-                dict(
-                    type='FilterAnnotations',
-                    min_gt_bbox_wh=(1, 1),
-                    keep_empty=False),
-                dict(type='Resize', scale=(640, 640), keep_ratio=False)
-            ],
-            [
-                dict(
-                    type='CachedMosaic',  # <-- may speed up, `Mosaic` in DEIM
-                    max_cached_images=50,
-                    img_scale=(320, 320),
-                    center_ratio_range=(1.0, 1.0),
-                    pad_val=0),
-                dict(
-                    type='RandomAffine',
-                    scaling_ratio_range=(0.5, 1.5),
-                    max_shear_degree=0,
-                    border_val=(0, 0, 0),
-                    center=None),
-                dict(
-                    type='PhotoMetricDistortion',
-                    hue_delta=12.75,
-                    clip_val=255,
-                    force_float32=False)
-            ],
-        ]),
-    dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
-    dict(type='RandomFlip', prob=0.5),
-    dict(type='PackDetInputs')
-]
-
-data_preprocessor_stage2 = dict(
-    type='DetDataPreprocessor',
-    batch_augments=[
-        dict(
-            type='BatchRandomChoice',
-            transforms=[
-                [dict(type='BatchMixup', ratio_range=(0.45, 0.55))],
-                [
-                    dict(
-                        type='BatchCopyBlend',
-                        area_threshold=100,
-                        num_objects=3,
-                        with_expand=True,
-                        expand_ratios=[0.1, 0.25],
-                        ratio_range=(0.45, 0.55),
-                        prob=0.5)
-                ],
-            ]),
-        dict(
-            type='BatchSyncRandomResize',
-            interval=1,
-            interpolations='nearest',
-            random_sizes=[480, 512, 544, 576, 608] + [640] * base_size_repeat +
-            [672, 704, 736, 768, 800])
-    ],
-    mean=[123.675, 116.28, 103.53],
-    std=[58.395, 57.12, 57.375],
-    bgr_to_rgb=True,
-    pad_size_divisor=1)
-data_preprocessor_stage3 = dict(
-    type='DetDataPreprocessor',
-    batch_augments=[
-        dict(
-            type='BatchCopyBlend',
-            area_threshold=100,
-            num_objects=3,
-            with_expand=True,
-            expand_ratios=[0.1, 0.25],
-            ratio_range=(0.45, 0.55),
-            prob=0.5),
-        dict(
-            type='BatchSyncRandomResize',
-            interval=1,
-            interpolations='nearest',
-            random_sizes=[480, 512, 544, 576, 608] + [640] * base_size_repeat +
-            [672, 704, 736, 768, 800])
-    ],
-    mean=[123.675, 116.28, 103.53],
-    std=[58.395, 57.12, 57.375],
-    bgr_to_rgb=True,
-    pad_size_divisor=1)
-data_preprocessor_stage4 = dict(
-    type='DetDataPreprocessor',
-    mean=[123.675, 116.28, 103.53],
-    std=[58.395, 57.12, 57.375],
-    bgr_to_rgb=True,
-    pad_size_divisor=1)
-
-stage2_switch_epoch = 4
 stage3_switch_epoch = 34
 stage4_switch_epoch = 60
 custom_hooks = [
@@ -208,8 +82,8 @@ custom_hooks = [
         priority=49),
     dict(
         type='PipelineSwitchHook',
-        switch_epoch=stage2_switch_epoch,
-        switch_pipeline=train_pipeline_stage2),
+        switch_epoch=_base_.stage2_switch_epoch,
+        switch_pipeline=_base_.train_pipeline_stage2),
     dict(
         type='PipelineSwitchHook',
         switch_epoch=stage3_switch_epoch,
@@ -220,16 +94,16 @@ custom_hooks = [
         switch_pipeline=_base_.train_pipeline_stage4),
     dict(
         type='DataPreprocessorSwitchHook',
-        switch_epoch=stage2_switch_epoch,
-        switch_data_preprocessor=data_preprocessor_stage2),
+        switch_epoch=_base_.stage2_switch_epoch,
+        switch_data_preprocessor=_base_.data_preprocessor_stage2),
     dict(
         type='DataPreprocessorSwitchHook',
         switch_epoch=stage3_switch_epoch,
-        switch_data_preprocessor=data_preprocessor_stage3),
+        switch_data_preprocessor=_base_.data_preprocessor_stage3),
     dict(
         type='DataPreprocessorSwitchHook',
         switch_epoch=stage4_switch_epoch,
-        switch_data_preprocessor=data_preprocessor_stage4)
+        switch_data_preprocessor=_base_.data_preprocessor_stage4)
 ]
 
 param_scheduler = [
