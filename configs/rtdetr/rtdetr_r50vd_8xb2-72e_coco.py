@@ -159,7 +159,7 @@ train_dataloader = dict(
     drop_last=True,
     pin_memory=True,
     dataset=dict(pipeline=train_pipeline))
-val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
+val_dataloader = dict(batch_size=2, dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
 # optimizer

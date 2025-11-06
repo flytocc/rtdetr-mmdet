@@ -52,6 +52,7 @@ model = dict(
             loss_weight=1.5)))
 
 train_dataloader = dict(batch_size=4, num_workers=4)
+val_dataloader = dict(batch_size=4, num_workers=4)
 
 # set all norm layers in backbone to lr_mult=0.1 and decay_mult=0.0
 # set all other layers in backbone to lr_mult=0.1
@@ -105,6 +106,7 @@ auto_scale_lr = dict(base_batch_size=32)
 max_epochs = 132
 train_cfg = dict(max_epochs=max_epochs)
 
+# for `EMADynamicMomentumHook`
 default_hooks = dict(checkpoint=dict(type='CheckpointAfterValHook'))
 
 stage2_num_epochs = 12

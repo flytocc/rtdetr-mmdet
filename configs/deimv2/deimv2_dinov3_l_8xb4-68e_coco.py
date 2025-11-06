@@ -12,8 +12,8 @@ model = dict(
                 type='BatchSyncRandomResize',
                 interval=1,
                 interpolations='nearest',
-                random_sizes=[480, 512, 544, 576, 608] + [
-                    640] * base_size_repeat + [672, 704, 736, 768, 800])
+                random_sizes=[480, 512, 544, 576, 608] +
+                [640] * base_size_repeat + [672, 704, 736, 768, 800])
         ],
         mean=[123.675, 116.28, 103.53],
         std=[58.395, 57.12, 57.375]),
@@ -45,10 +45,20 @@ model = dict(
             self_attn_cfg=dict(embed_dims=224),
             cross_attn_cfg=dict(embed_dims=224),
             ffn_cfg=dict(
-                _delete_=True,
-                embed_dims=224,
+                _delete_=True, embed_dims=224,
+                # the implementation is different from official DEIMV2 repo
+                # `feedforward_channels` shuold be half of that in official
                 feedforward_channels=896))),  # SwiGLUFFN
-    bbox_head=dict(embed_dims=224))
+    bbox_head=dict(embed_dims=224),
+    train_cfg=dict(
+        switch_assigner=dict(
+            switch_epoch=50,
+            assigner=dict(
+                type='HungarianAssigner',
+                match_costs=[
+                    dict(
+                        type='DEIMV2LossCost', iou_order_alpha=4.0, weight=1.)
+                ]))))
 
 custom_keys = {
     'backbone.dinov3': dict(lr_mult=0.025),
@@ -64,8 +74,7 @@ custom_keys.update({
         'norm1.weight', 'norm1.bias', 'norm2.weight', 'norm2.bias',
         'attn.qkv.bias', 'attn.qkv.bias_mask', 'attn.proj.bias',
         'mlp.fc1.bias', 'mlp.fc2.bias'
-    ]
-    for bid in range(12)
+    ] for bid in range(12)
 })
 
 # optimizer
@@ -77,6 +86,55 @@ optim_wrapper = dict(
 max_epochs = 68
 train_cfg = dict(max_epochs=max_epochs)
 
+train_pipeline_stage2 = [
+    dict(
+        type='RandomChoice',
+        transforms=[
+            [
+                dict(
+                    type='PhotoMetricDistortion',
+                    hue_delta=12.75,
+                    clip_val=255,
+                    force_float32=False),
+                dict(type='Expand', mean=[0, 0, 0]),
+                dict(
+                    type='RandomApply',
+                    transforms=dict(
+                        type='MinIoURandomCrop',
+                        cover_all_box=False,
+                        trials=40),
+                    prob=0.8),
+                dict(
+                    type='FilterAnnotations',
+                    min_gt_bbox_wh=(1, 1),
+                    keep_empty=False),
+                dict(type='Resize', scale=(640, 640), keep_ratio=False)
+            ],
+            [
+                dict(
+                    type='CachedMosaic',  # <-- may speed up, `Mosaic` in DEIM
+                    max_cached_images=50,
+                    img_scale=(320, 320),
+                    center_ratio_range=(1.0, 1.0),
+                    pad_val=0),
+                dict(
+                    type='RandomAffine',
+                    scaling_ratio_range=(0.5, 1.5),
+                    max_shear_degree=0,
+                    border_val=(0, 0, 0),
+                    center=None),
+                dict(
+                    type='PhotoMetricDistortion',
+                    hue_delta=12.75,
+                    clip_val=255,
+                    force_float32=False)
+            ],
+        ]),
+    dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
+    dict(type='RandomFlip', prob=0.5),
+    dict(type='PackDetInputs')
+]
+
 data_preprocessor_stage2 = dict(
     type='DetDataPreprocessor',
     batch_augments=[
@@ -84,14 +142,16 @@ data_preprocessor_stage2 = dict(
             type='BatchRandomChoice',
             transforms=[
                 [dict(type='BatchMixup', ratio_range=(0.45, 0.55))],
-                [dict(
-                    type='BatchCopyBlend',
-                    area_threshold=100,
-                    num_objects=3,
-                    with_expand=True,
-                    expand_ratios=[0.1, 0.25],
-                    ratio_range=(0.45, 0.55),
-                    prob=0.5)],
+                [
+                    dict(
+                        type='BatchCopyBlend',
+                        area_threshold=100,
+                        num_objects=3,
+                        with_expand=True,
+                        expand_ratios=[0.1, 0.25],
+                        ratio_range=(0.45, 0.55),
+                        prob=0.5)
+                ],
             ]),
         dict(
             type='BatchSyncRandomResize',
@@ -137,6 +197,7 @@ stage2_switch_epoch = 4
 stage3_switch_epoch = 34
 stage4_switch_epoch = 60
 custom_hooks = [
+    dict(type='SetEpochInfoHook'),  # for DEIMV2 assigner switch
     dict(
         type='EMADynamicMomentumHook',
         restart_epoch=stage4_switch_epoch,
@@ -148,7 +209,7 @@ custom_hooks = [
     dict(
         type='PipelineSwitchHook',
         switch_epoch=stage2_switch_epoch,
-        switch_pipeline=_base_.train_pipeline_stage2),
+        switch_pipeline=train_pipeline_stage2),
     dict(
         type='PipelineSwitchHook',
         switch_epoch=stage3_switch_epoch,

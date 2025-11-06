@@ -145,6 +145,7 @@ data_preprocessor_stage4 = dict(
     bgr_to_rgb=True,
     pad_size_divisor=1)
 
+# for `EMADynamicMomentumHook`
 default_hooks = dict(checkpoint=dict(type='CheckpointAfterValHook'))
 
 stage2_switch_epoch = 4

@@ -523,3 +523,53 @@ class CrossEntropyLossCost(BaseMatchCost):
             raise NotImplementedError
 
         return cls_cost * self.weight
+
+
+@TASK_UTILS.register_module()
+class DEIMV2LossCost(BaseMatchCost):
+    """DEIMV2LossCost.
+
+    Args:
+        iou_order_alpha (float): The power of IoU in DEIMV2 loss.
+            Defaults to 1.0.
+        weight (Union[float, int]): Cost weight. Defaults to 1.
+    """
+
+    def __init__(self,
+                 iou_order_alpha: float = 1.0,
+                 weight: Union[float, int] = 1) -> None:
+        super().__init__(weight=weight)
+        self.iou_order_alpha = iou_order_alpha
+
+    def __call__(self,
+                 pred_instances: InstanceData,
+                 gt_instances: InstanceData,
+                 img_meta: Optional[dict] = None,
+                 **kwargs) -> Tensor:
+        """Compute match cost.
+
+        Args:
+            pred_instances (:obj:`InstanceData`): ``features`` inside is
+                predicted features, of shape (num_queries, feature_dim).
+            gt_instances (:obj:`InstanceData`): ``features`` inside should have
+                shape (num_gt, feature_dim).
+            img_meta (Optional[dict]): Image information. Defaults to None.
+
+        Returns:
+            Tensor: Match Cost matrix of shape (num_preds, num_gts).
+        """
+        pred_scores = pred_instances.scores
+        gt_labels = gt_instances.labels
+
+        cls_pred = pred_scores[:, gt_labels].sigmoid()
+
+        pred_bboxes = pred_instances.bboxes
+        gt_bboxes = gt_instances.bboxes
+
+        # avoid fp16 overflow
+        pred_bboxes = pred_bboxes.to(torch.float32)
+
+        overlaps = bbox_overlaps(
+            pred_bboxes, gt_bboxes, mode='iou', is_aligned=False)
+
+        return -self.weight * cls_pred * overlaps.pow(self.iou_order_alpha)

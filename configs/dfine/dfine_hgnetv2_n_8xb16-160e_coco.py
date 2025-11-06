@@ -32,6 +32,7 @@ model = dict(
     bbox_head=dict(embed_dims=base_dim))
 
 train_dataloader = dict(batch_size=16, num_workers=8)
+train_dataloader = dict(batch_size=8, num_workers=4)
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(lr=0.0008))
