@@ -12,7 +12,9 @@ from mmdet.models.losses.utils import weighted_loss
 from mmdet.registry import MODELS
 from mmdet.structures.bbox import bbox_cxcywh_to_xyxy, bbox_overlaps
 from mmdet.structures.bbox.transforms import bbox_xyxy_to_cxcywh
-from mmdet.utils import ConfigType, InstanceList, OptInstanceList, reduce_mean
+from mmdet.utils import (InstanceList, OptConfigType, OptInstanceList,
+                         reduce_mean)
+
 from ..layers.transformer.dfine_layers import bbox2distance
 from ..losses import VarifocalLoss
 from ..utils import multi_apply
@@ -36,11 +38,12 @@ class DFINEHead(RTDETRHead):
                  reg_max: int = 32,
                  reg_scale: float = 4,
                  layer_scale: float = 1.0,
+                 use_uni_set: bool = True,
                  eval_idx: int = -1,
                  share_pred_layer: bool = False,
                  num_pred_layer: int = 6,
-                 fgl_loss_weight: float = 0.15,
-                 loss_ld: ConfigType = dict(
+                 fgl_loss_weight: Optional[float] = 0.15,
+                 loss_ld: OptConfigType = dict(
                      type='KnowledgeDistillationKLDivLoss',
                      T=5,
                      reduction='none',
@@ -50,6 +53,7 @@ class DFINEHead(RTDETRHead):
         self.reg_max = reg_max
         self.reg_scale = reg_scale
         self.layer_scale = layer_scale
+        self.use_uni_set = use_uni_set
         if eval_idx < 0:
             eval_idx = num_pred_layer - 1 + eval_idx
         self.eval_idx = eval_idx
@@ -59,7 +63,7 @@ class DFINEHead(RTDETRHead):
             num_pred_layer=num_pred_layer,
             **kwargs)
         self.fgl_loss_weight = fgl_loss_weight
-        self.loss_ld = MODELS.build(loss_ld)
+        self.loss_ld = MODELS.build(loss_ld) if loss_ld is not None else None
 
     def _init_layers(self) -> None:
         """Initialize classification branch and regression branch of head."""
@@ -293,19 +297,22 @@ class DFINEHead(RTDETRHead):
         (initial_match_indices,
          *all_layers_match_indices) = all_layers_match_indices
 
-        # `_get_merged_match_indices` performs sorting，
-        # be aware that the input order may influence training behavior.
-        all_match_indices = (all_layers_match_indices[-1],
-                             *all_layers_match_indices[:-1],
-                             initial_match_indices)
-        if enc_match_indices is not None:
-            all_match_indices = (*all_match_indices, enc_match_indices)
-        merged_match_indices = self._get_merged_match_indices(
-            *all_match_indices)
+        if self.use_uni_set:
+            # `_get_merged_match_indices` performs sorting，
+            # be aware that the input order may influence training behavior.
+            all_match_indices = (all_layers_match_indices[-1],
+                                 *all_layers_match_indices[:-1],
+                                 initial_match_indices)
+            if enc_match_indices is not None:
+                all_match_indices = (*all_match_indices, enc_match_indices)
 
-        device = all_layers_matching_cls_scores[-1].device
-        merged_match_indices = [(pos.to(device), gt.to(device))
-                                for pos, gt in merged_match_indices]
+            merged_match_indices = self._get_merged_match_indices(
+                *all_match_indices)
+            device = all_layers_matching_cls_scores[-1].device
+            merged_match_indices = [(pos.to(device), gt.to(device))
+                                    for pos, gt in merged_match_indices]
+        else:
+            merged_match_indices = None
 
         teacher_scores = all_layers_matching_cls_scores[-1].detach()
         teacher_corners = all_layers_matching_bbox_corners[-1].detach()
@@ -386,10 +393,10 @@ class DFINEHead(RTDETRHead):
             loss_dict['enc_loss_iou'] = enc_losses_iou
 
         if all_layers_denoising_cls_scores is not None:
-            (initial_dn_cls_scores,
-            *all_layers_denoising_cls_scores) = all_layers_denoising_cls_scores
-            (initial_dn_bbox_preds,
-            *all_layers_denoising_bbox_preds) = all_layers_denoising_bbox_preds
+            (initial_dn_cls_scores, *all_layers_denoising_cls_scores
+             ) = all_layers_denoising_cls_scores
+            (initial_dn_bbox_preds, *all_layers_denoising_bbox_preds
+             ) = all_layers_denoising_bbox_preds
 
             dn_teacher_scores = all_layers_denoising_cls_scores[-1].detach()
             dn_teacher_corners = all_layers_denoising_bbox_corners[-1].detach()
@@ -482,7 +489,7 @@ class DFINEHead(RTDETRHead):
             `loss_iou`.
         """
         num_imgs, num_queries, _ = cls_scores.shape
-        (labels_list, label_weights_list, bbox_targets_list,
+        (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
          bbox_num_pos_list) = multi_apply(
              self._get_cls_targets_single,
              batch_match_indices,
@@ -527,16 +534,20 @@ class DFINEHead(RTDETRHead):
                 cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
 
         if num_queries not in self.cached_bbox_targets:
-            (bbox_targets_list, bbox_weights_list,
-             bbox_num_pos_list) = multi_apply(
-                 self._get_bbox_targets_single,
-                 merged_match_indices,
-                 batch_gt_instances,
-                 batch_img_metas,
-                 num_queries=num_queries,
-                 device=bbox_preds.device)
-            num_total_bbox_pos = sum(bbox_num_pos_list)
-            bbox_targets = torch.cat(bbox_targets_list, 0)
+            if self.use_uni_set:
+                (bbox_targets_list, bbox_weights_list,
+                 bbox_num_pos_list) = multi_apply(
+                     self._get_bbox_targets_single,
+                     merged_match_indices,
+                     batch_gt_instances,
+                     batch_img_metas,
+                     num_queries=num_queries,
+                     device=bbox_preds.device)
+                num_total_bbox_pos = sum(bbox_num_pos_list)
+                bbox_targets = torch.cat(bbox_targets_list, 0)
+            else:
+                num_total_bbox_pos = num_total_pos
+
             bbox_weights = torch.cat(bbox_weights_list, 0)
 
             # Compute the average number of gt boxes across all gpus, for
@@ -582,35 +593,43 @@ class DFINEHead(RTDETRHead):
         if bbox_corners is None:
             return loss_cls, loss_bbox, loss_iou
 
+        with_fgl_loss = self.fgl_loss_weight is not None
+        with_dff_loss = self.loss_ld is not None and teacher is not None
+        if not with_fgl_loss and not with_dff_loss:
+            loss_fgl = loss_ddf = bbox_corners.new_tensor(0)
+            return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
+
         bbox_pos_inds = torch.nonzero(
             bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
-
-        # distribution focal loss
-        initial_bbox_preds = initial_bbox_preds.reshape(-1, 4)
-        bbox_corners = bbox_corners.reshape(-1, 4, self.reg_max + 1)
-
-        if self.cached_fgl_targets is None:
-            self.cached_fgl_targets = bbox2distance(
-                initial_bbox_preds[bbox_pos_inds],
-                bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]), self.reg_max,
-                self.reg_scale, 0.5)
-        target_corners, weight_right, weight_left = self.cached_fgl_targets
-
         pos_ious = bbox_overlaps(
             bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
             is_aligned=True).detach()
-        weight_targets = pos_ious.unsqueeze(-1).repeat(1, 4).reshape(-1)
 
-        loss_fgl = self.fgl_loss_weight * unimodal_distribution_focal_loss(
-            bbox_corners[bbox_pos_inds].reshape(-1, self.reg_max + 1),
-            target_corners,
-            weight_right=weight_right,
-            weight_left=weight_left,
-            weight=weight_targets,
-            avg_factor=bbox_avg_factor)
+        # distribution focal loss
+        if with_fgl_loss:
+            initial_bbox_preds = initial_bbox_preds.reshape(-1, 4)
+            bbox_corners = bbox_corners.reshape(-1, 4, self.reg_max + 1)
+            weight_targets = pos_ious.unsqueeze(-1).repeat(1, 4).reshape(-1)
+
+            if self.cached_fgl_targets is None:
+                self.cached_fgl_targets = bbox2distance(
+                    initial_bbox_preds[bbox_pos_inds],
+                    bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]),
+                    self.reg_max, self.reg_scale, 0.5)
+            target_corners, weight_right, weight_left = self.cached_fgl_targets
+
+            loss_fgl = self.fgl_loss_weight * unimodal_distribution_focal_loss(
+                bbox_corners[bbox_pos_inds].reshape(-1, self.reg_max + 1),
+                target_corners,
+                weight_right=weight_right,
+                weight_left=weight_left,
+                weight=weight_targets,
+                avg_factor=bbox_avg_factor)
+        else:
+            loss_fgl = bbox_corners.new_tensor(0)
 
         # vari KnowledgeDistillationKLDivLoss
-        if teacher is not None:
+        if with_dff_loss:
             teacher_scores, teacher_corners = teacher
             teacher_scores = teacher_scores.reshape(-1, self.cls_out_channels)
             teacher_corners = teacher_corners.reshape(-1, self.reg_max + 1)
@@ -670,6 +689,7 @@ class DFINEHead(RTDETRHead):
             - labels (Tensor): Labels of each image.
             - label_weights (Tensor]): Label weights of each image.
             - bbox_targets (Tensor): BBox targets of each image.
+            - bbox_weights (Tensor]): BBox weights of each image.
             - num_pos (int): The number of positive samples for the image.
         """
         pos_inds, pos_assigned_gt_inds = match_indices
@@ -690,6 +710,12 @@ class DFINEHead(RTDETRHead):
                                    device=device)
         bbox_targets[pos_inds] = pos_gt_bboxes_targets
 
+        # bbox weights
+        bbox_weights = torch.zeros((num_queries, 4),
+                                   dtype=dtype,
+                                   device=device)
+        bbox_weights[pos_inds] = 1.0
+
         # label targets
         gt_labels = gt_instances.labels
         labels = torch.full((num_queries, ),
@@ -699,7 +725,8 @@ class DFINEHead(RTDETRHead):
         labels[pos_inds] = gt_labels[pos_assigned_gt_inds]
         label_weights = gt_labels.new_ones(num_queries)
 
-        return labels, label_weights, bbox_targets, pos_inds.numel()
+        return (labels, label_weights, bbox_targets, bbox_weights,
+                pos_inds.numel())
 
     @torch.no_grad()
     def _get_bbox_targets_single(self, match_indices: Tuple[Tensor, Tensor],
@@ -809,7 +836,8 @@ class DFINEHead(RTDETRHead):
             bbox_targets = torch.cat(bbox_targets_list, 0)
             bbox_weights = torch.cat(bbox_weights_list, 0)
 
-            # construct weighted avg_factor to match with the official DETR repo
+            # construct weighted avg_factor
+            # to match with the official DETR repo
             cls_avg_factor = \
                 num_total_pos * 1.0 + num_total_neg * self.bg_cls_weight
             if self.sync_cls_avg_factor:
@@ -882,35 +910,44 @@ class DFINEHead(RTDETRHead):
         if dn_bbox_corners is None:
             return loss_cls, loss_bbox, loss_iou, None, None
 
+        with_fgl_loss = self.fgl_loss_weight is not None
+        with_dff_loss = self.loss_ld is not None and teacher is not None
+        if not with_fgl_loss and not with_dff_loss:
+            loss_fgl = loss_ddf = dn_bbox_corners.new_tensor(0)
+            return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
+
         bbox_pos_inds = torch.nonzero(
             bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
-
-        # distribution focal loss
-        initial_dn_bbox_preds = initial_dn_bbox_preds.reshape(-1, 4)
-        dn_bbox_corners = dn_bbox_corners.reshape(-1, 4, self.reg_max + 1)
-
-        if self.cached_dn_fgl_targets is None:
-            self.cached_dn_fgl_targets = bbox2distance(
-                initial_dn_bbox_preds[bbox_pos_inds],
-                bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]), self.reg_max,
-                self.reg_scale, 0.5)
-        target_corners, weight_right, weight_left = self.cached_dn_fgl_targets
-
         pos_ious = bbox_overlaps(
             bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
             is_aligned=True).detach()
-        weight_targets = pos_ious.unsqueeze(-1).repeat(1, 4).reshape(-1)
 
-        loss_fgl = self.fgl_loss_weight * unimodal_distribution_focal_loss(
-            dn_bbox_corners[bbox_pos_inds].reshape(-1, self.reg_max + 1),
-            target_corners,
-            weight_right=weight_right,
-            weight_left=weight_left,
-            weight=weight_targets,
-            avg_factor=bbox_avg_factor)
+        # distribution focal loss
+        if with_fgl_loss:
+            initial_dn_bbox_preds = initial_dn_bbox_preds.reshape(-1, 4)
+            dn_bbox_corners = dn_bbox_corners.reshape(-1, 4, self.reg_max + 1)
+            weight_targets = pos_ious.unsqueeze(-1).repeat(1, 4).reshape(-1)
+
+            if self.cached_dn_fgl_targets is None:
+                self.cached_dn_fgl_targets = bbox2distance(
+                    initial_dn_bbox_preds[bbox_pos_inds],
+                    bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]),
+                    self.reg_max, self.reg_scale, 0.5)
+            (target_corners, weight_right,
+             weight_left) = self.cached_dn_fgl_targets
+
+            loss_fgl = self.fgl_loss_weight * unimodal_distribution_focal_loss(
+                dn_bbox_corners[bbox_pos_inds].reshape(-1, self.reg_max + 1),
+                target_corners,
+                weight_right=weight_right,
+                weight_left=weight_left,
+                weight=weight_targets,
+                avg_factor=bbox_avg_factor)
+        else:
+            loss_fgl = dn_bbox_corners.new_tensor(0)
 
         # vari KnowledgeDistillationKLDivLoss
-        if teacher is not None:
+        if with_dff_loss:
             teacher_scores, teacher_corners = teacher
             teacher_scores = teacher_scores.reshape(-1, self.cls_out_channels)
             teacher_corners = teacher_corners.reshape(-1, self.reg_max + 1)

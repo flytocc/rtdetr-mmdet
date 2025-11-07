@@ -3,7 +3,7 @@ import math
 import warnings
 from copy import deepcopy
 from functools import lru_cache
-from typing import List, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -121,12 +121,15 @@ class DFINEFPN(RTDETRFPN):
             list[:obj:`ConfigDict`], optional): Initialization config dict.
     """
 
+    csp_block = RepNCSPELAN4
+
     def __init__(
         self,
         in_channels: List[int] = [256, 256, 256],
         out_channels: int = 256,
         num_csp_blocks: int = 3,
         expansion: float = 1.0,
+        fuse_type: Literal['cat', 'sum'] = 'cat',
         upsample_cfg: ConfigType = dict(scale_factor=2, mode='nearest'),
         conv_cfg: OptConfigType = None,
         norm_cfg: OptConfigType = dict(type='BN', requires_grad=True),
@@ -142,6 +145,8 @@ class DFINEFPN(RTDETRFPN):
         super(RTDETRFPN, self).__init__(init_cfg=init_cfg)
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.fuse_type = fuse_type
+        inp_scale = 2 if fuse_type == 'cat' else 1
 
         # top-down fpn
         self.upsample = nn.Upsample(**upsample_cfg)
@@ -157,9 +162,10 @@ class DFINEFPN(RTDETRFPN):
                     norm_cfg=norm_cfg,
                     act_cfg=None))
             self.top_down_blocks.append(
-                RepNCSPELAN4(
-                    in_channels[idx - 1] * 2,
+                self.csp_block(
+                    in_channels[idx - 1] * inp_scale,
                     in_channels[idx - 1],
+                    hidden_channels=in_channels[idx - 1] * 2,
                     num_blocks=num_csp_blocks,
                     expand_ratio=expansion,
                     conv_cfg=conv_cfg,
@@ -190,9 +196,10 @@ class DFINEFPN(RTDETRFPN):
                         norm_cfg=norm_cfg,
                         act_cfg=None)))
             self.bottom_up_blocks.append(
-                RepNCSPELAN4(
-                    in_channels[idx] * 2,
+                self.csp_block(
+                    in_channels[idx] * inp_scale,
                     in_channels[idx + 1],
+                    hidden_channels=in_channels[idx] * 2,
                     num_blocks=num_csp_blocks,
                     expand_ratio=expansion,
                     conv_cfg=conv_cfg,
@@ -210,6 +217,50 @@ class DFINEFPN(RTDETRFPN):
                     norm_cfg=norm_cfg,
                     act_cfg=None) if in_channels[i] != out_channels else nn.
                 Identity())
+
+    def forward(self, inputs: Tuple[Tensor]) -> Tuple[Tensor]:
+        """
+        Args:
+            inputs (tuple[Tensor]): input features.
+
+        Returns:
+            tuple[Tensor]: FPN features.
+        """
+        assert len(inputs) == len(self.in_channels)
+
+        # top-down path
+        inner_outs = [inputs[-1]]
+        for idx in range(len(self.in_channels) - 1, 0, -1):
+            feat_high = inner_outs[0]
+            feat_low = inputs[idx - 1]
+            feat_high = self.reduce_layers[len(self.in_channels) - 1 - idx](
+                feat_high)
+            inner_outs[0] = feat_high
+
+            upsample_feat = self.upsample(feat_high)
+
+            fused_feat = torch.cat([upsample_feat, feat_low], 1) \
+                if self.fuse_type == 'cat' else (upsample_feat + feat_low)
+            inner_out = self.top_down_blocks[len(self.in_channels) - 1 - idx](
+                fused_feat)
+            inner_outs.insert(0, inner_out)
+
+        # bottom-up path
+        outs = [inner_outs[0]]
+        for idx in range(len(self.in_channels) - 1):
+            feat_low = outs[-1]
+            feat_high = inner_outs[idx + 1]
+            downsample_feat = self.downsamples[idx](feat_low)
+            fused_feat = torch.cat([downsample_feat, feat_high], 1) \
+                if self.fuse_type == 'cat' else (downsample_feat + feat_high)
+            out = self.bottom_up_blocks[idx](fused_feat)
+            outs.append(out)
+
+        # out convs
+        for idx, conv in enumerate(self.out_convs):
+            outs[idx] = conv(outs[idx])
+
+        return tuple(outs)
 
 
 @lru_cache

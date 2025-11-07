@@ -1,13 +1,12 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import math
-from copy import deepcopy
 
 from mmengine.logging import MMLogger
 from torch import nn
 
 from mmdet.registry import MODELS, TASK_UTILS
 from mmdet.utils import ConfigType
-from ..layers import MLP, DEIMV2TransformerDecoder
+from ..layers import MLP, DEIMV2TransformerDecoder, RTDETRHybridEncoder
 from ..layers.transformer.dfine_layers import (
     LQE, Gate, MultiNumPointsMultiScaleDeformableAttention)
 from .deformable_detr import DeformableDETR, MultiScaleDeformableAttention
@@ -61,9 +60,9 @@ class DEIMV2(DEIMDFINE):
         ref_hidden_dim = self.decoder.pop('ref_hidden_dim', None)
         ref_num_layers = self.decoder.pop('ref_num_layers', 2)
 
-        decoder_cfg = deepcopy(self.decoder)
-        super()._init_layers()
-        self.decoder = DEIMV2TransformerDecoder(**decoder_cfg)
+        self.encoder = RTDETRHybridEncoder(**self.encoder)
+        self.decoder = DEIMV2TransformerDecoder(**self.decoder)
+        self.embed_dims = self.decoder.embed_dims
         self.memory_trans_fc = nn.Identity()
         self.memory_trans_norm = nn.Identity()
 
@@ -109,6 +108,7 @@ class DEIMV2(DEIMDFINE):
 
     def set_epoch(self, value: int) -> None:
         """Set current epoch number and switch assigner if needed.
+
         Note:
             This function is called by `SetEpochInfoHook` during training.
         """

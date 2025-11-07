@@ -1,21 +1,20 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import math
 from copy import deepcopy
-from typing import List, Literal, Optional, Tuple
+from typing import List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from mmcv.cnn import ConvModule
-from mmengine.model import ModuleList
+from mmcv.cnn import ConvModule, build_activation_layer
+from mmengine.model import BaseModule, ModuleList
 from torch import Tensor, nn
 
 from mmdet.registry import MODELS
 from mmdet.utils import ConfigType, OptConfigType, OptMultiConfig
-
+from .dfine_layers import (DFINEFPN, LQE, DFINETransformerDecoder,
+                           DFINETransformerDecoderLayer, Integral,
+                           RepNCSPELAN4, distance2bbox)
 from .rtdetr_layers import CSPLayer
-from .dfine_layers import (DFINEFPN, DFINETransformerDecoder,
-                           DFINETransformerDecoderLayer,
-                           Integral, LQE, RepNCSPELAN4, distance2bbox)
 from .utils import MLP
 
 
@@ -70,11 +69,104 @@ class RepNCSPELAN5(RepNCSPELAN4):
 
 @MODELS.register_module()
 class DEIMV2FPN(DFINEFPN):
-    """FPN of DEIM v2.
+    """FPN of DEIM v2."""
+
+    csp_block = RepNCSPELAN5
+
+
+# Modified from
+# https://github.com/meituan/YOLOv6/blob/main/yolov6/layers/common.py#L695
+class GAP_Fusion(nn.Module):
+    """BiFusion Block in PAN."""
+
+    def __init__(self,
+                 in_channels: int,
+                 out_channels: int,
+                 conv_cfg: OptConfigType = None,
+                 norm_cfg: OptConfigType = dict(type='BN', requires_grad=True),
+                 act_cfg: OptConfigType = dict(type='SiLU', inplace=True)):
+        super().__init__()
+        self.cv = ConvModule(
+            in_channels,
+            out_channels,
+            1,
+            conv_cfg=conv_cfg,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg)
+
+    def forward(self, x):
+        # global average pooling
+        gap = F.adaptive_avg_pool2d(x, 1)
+        x = x + gap
+        return self.cv(x)
+
+
+# Modified from mmdet/models/necks/channel_mapper.py
+@MODELS.register_module()
+class DEIMV2ChannelMapper(BaseModule):
+
+    def __init__(
+        self,
+        in_channels: List[int],
+        out_channels: int,
+        kernel_size: int = 3,
+        conv_cfg: OptConfigType = None,
+        norm_cfg: OptConfigType = None,
+        act_cfg: OptConfigType = dict(type='ReLU'),
+        extra_act_cfg: OptConfigType = dict(type='SiLU', inplace=True),
+        bias: Union[bool, str] = 'auto',
+        num_outs: int = None,
+        init_cfg: OptMultiConfig = dict(
+            type='Xavier', layer='Conv2d', distribution='uniform')
+    ) -> None:
+        super().__init__(init_cfg=init_cfg)
+        assert isinstance(in_channels, list)
+        self.extra_convs = None
+        if num_outs is None:
+            num_outs = len(in_channels)
+        self.convs = nn.ModuleList()
+        for in_channel in in_channels:
+            self.convs.append(
+                ConvModule(
+                    in_channel,
+                    out_channels,
+                    kernel_size,
+                    padding=(kernel_size - 1) // 2,
+                    conv_cfg=conv_cfg,
+                    norm_cfg=norm_cfg,
+                    act_cfg=act_cfg,
+                    bias=bias))
+        if num_outs > len(in_channels):
+            self.extra_convs = nn.ModuleList()
+            for _ in range(len(in_channels), num_outs):
+                self.extra_convs.append(
+                    nn.Sequential(
+                        nn.AvgPool2d(kernel_size=3, stride=2, padding=1),
+                        ConvModule(
+                            out_channels,
+                            out_channels,
+                            1,
+                            conv_cfg=conv_cfg,
+                            norm_cfg=norm_cfg,
+                            act_cfg=extra_act_cfg)))
+
+    def forward(self, inputs: Tuple[Tensor]) -> Tuple[Tensor]:
+        """Forward function."""
+        assert len(inputs) == len(self.convs)
+        outs = [self.convs[i](inputs[i]) for i in range(len(inputs))]
+        if self.extra_convs:
+            for i in range(len(self.extra_convs)):
+                outs.append(self.extra_convs[i](outs[-1]))
+        return tuple(outs)
+
+
+@MODELS.register_module()
+class DEIMV2LiteFPN(DFINEFPN):
+    """Lite FPN of DEIM v2.
 
     Args:
         in_channels (List[int], optional): The input channels of the
-            feature maps. Defaults to [256, 256, 256].
+            feature maps. Defaults to [256, 256].
         out_channels (int, optional): The output dimension of the MLP.
             Defaults to 256.
         num_csp_blocks (int): Number of bottlenecks in CSPLayer.
@@ -95,7 +187,7 @@ class DEIMV2FPN(DFINEFPN):
 
     def __init__(
         self,
-        in_channels: List[int] = [256, 256, 256],
+        in_channels: List[int] = [256, 256],
         out_channels: int = 256,
         num_csp_blocks: int = 3,
         expansion: float = 1.0,
@@ -124,15 +216,14 @@ class DEIMV2FPN(DFINEFPN):
         self.top_down_blocks = nn.ModuleList()
         for idx in range(len(in_channels) - 1, 0, -1):
             self.reduce_layers.append(
-                ConvModule(
+                GAP_Fusion(
                     in_channels[idx],
                     in_channels[idx - 1],
-                    1,
                     conv_cfg=conv_cfg,
                     norm_cfg=norm_cfg,
-                    act_cfg=None))
+                    act_cfg=act_cfg))
             self.top_down_blocks.append(
-                RepNCSPELAN5(
+                self.csp_block(
                     in_channels[idx - 1] * inp_scale,
                     in_channels[idx - 1],
                     hidden_channels=in_channels[idx - 1] * 2,
@@ -148,25 +239,16 @@ class DEIMV2FPN(DFINEFPN):
         for idx in range(len(in_channels) - 1):
             self.downsamples.append(
                 nn.Sequential(
+                    nn.AvgPool2d(kernel_size=3, stride=2, padding=1),
                     ConvModule(
                         in_channels[idx],
                         in_channels[idx],
                         1,
                         conv_cfg=conv_cfg,
                         norm_cfg=norm_cfg,
-                        act_cfg=None),
-                    ConvModule(
-                        in_channels[idx],
-                        in_channels[idx],
-                        3,
-                        stride=2,
-                        padding=1,
-                        groups=in_channels[idx],
-                        conv_cfg=conv_cfg,
-                        norm_cfg=norm_cfg,
-                        act_cfg=None)))
+                        act_cfg=act_cfg)))
             self.bottom_up_blocks.append(
-                RepNCSPELAN5(
+                self.csp_block(
                     in_channels[idx] * inp_scale,
                     in_channels[idx + 1],
                     hidden_channels=in_channels[idx] * 2,
@@ -188,6 +270,91 @@ class DEIMV2FPN(DFINEFPN):
                     act_cfg=None) if in_channels[i] != out_channels else nn.
                 Identity())
 
+
+@MODELS.register_module()
+class DEIMV2LiteEncoder(BaseModule):
+    """LiteEncoder of DEIM v2.
+
+    Args:
+        in_channels (List[int], optional): The input channels of the
+            feature maps. Defaults to [256, 256, 256].
+        out_channels (int, optional): The output dimension of the MLP.
+            Defaults to 256.
+        num_csp_blocks (int): Number of bottlenecks in CSPLayer.
+            Defaults to 3.
+        expansion (float, optional): The expansion of the CSPLayer.
+            Defaults to 1.0.
+        upsample_cfg (dict): Config dict for interpolate layer.
+            Default: `dict(scale_factor=2, mode='nearest')`
+        conv_cfg (dict, optional): Config dict for convolution layer.
+            Default: None, which means using conv2d.
+        norm_cfg (:obj:`ConfigDict` or dict, optional): The config dict for
+            normalization layers. Defaults to dict(type='BN').
+        act_cfg (:obj:`ConfigDict` or dict, optional): The config dict for
+            activation layers. Defaults to dict(type='SiLU', inplace=True).
+        init_cfg (:obj:`ConfigDict` or dict or list[dict] or
+            list[:obj:`ConfigDict`], optional): Initialization config dict.
+    """
+
+    def __init__(
+        self,
+        in_channels: List[int] = [256, 256, 256],
+        out_channels: int = 256,
+        num_csp_blocks: int = 3,
+        expansion: float = 1.0,
+        upsample_cfg: ConfigType = dict(scale_factor=2, mode='nearest'),
+        conv_cfg: OptConfigType = None,
+        norm_cfg: OptConfigType = dict(type='BN', requires_grad=True),
+        act_cfg: OptConfigType = dict(type='SiLU', inplace=True),
+        init_cfg: OptMultiConfig = dict(
+            type='Kaiming',
+            layer='Conv2d',
+            a=math.sqrt(5),
+            distribution='uniform',
+            mode='fan_in',
+            nonlinearity='leaky_relu')
+    ) -> None:
+        super(DFINEFPN, self).__init__(init_cfg=init_cfg)
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+
+        down_sample = nn.Sequential(
+            nn.AvgPool2d(kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(in_channels[0], in_channels[0], 1, bias=False),
+            nn.BatchNorm2d(in_channels[0]), build_activation_layer(act_cfg))
+        self.down_sample1 = deepcopy(down_sample)
+        self.down_sample2 = deepcopy(down_sample)
+
+        # Bi-Fusion
+        self.bi_fusion = GAP_Fusion(in_channels[0], in_channels[0], act_cfg)
+
+        self.upsample = nn.Upsample(**upsample_cfg)
+
+        # fuse block
+        fuse_block = RepNCSPELAN4(
+            in_channels[0],
+            in_channels[0],
+            hidden_channels=in_channels[0] * 2,
+            num_blocks=num_csp_blocks,
+            expand_ratio=expansion,
+            conv_cfg=conv_cfg,
+            norm_cfg=norm_cfg,
+            act_cfg=act_cfg)
+        self.fpn_block = deepcopy(fuse_block)
+        self.pan_block = deepcopy(fuse_block)
+
+        self.out_convs = nn.ModuleList()
+        for i in range(len(in_channels)):
+            self.out_convs.append(
+                ConvModule(
+                    in_channels[i],
+                    out_channels,
+                    1,
+                    conv_cfg=conv_cfg,
+                    norm_cfg=norm_cfg,
+                    act_cfg=None) if in_channels[i] != out_channels else nn.
+                Identity())
+
     def forward(self, inputs: Tuple[Tensor]) -> Tuple[Tensor]:
         """
         Args:
@@ -196,35 +363,21 @@ class DEIMV2FPN(DFINEFPN):
         Returns:
             tuple[Tensor]: FPN features.
         """
-        assert len(inputs) == len(self.in_channels)
+        assert len(inputs) == len(self.in_channels) == 1
 
-        # top-down path
-        inner_outs = [inputs[-1]]
-        for idx in range(len(self.in_channels) - 1, 0, -1):
-            feat_high = inner_outs[0]
-            feat_low = inputs[idx - 1]
-            feat_high = self.reduce_layers[len(self.in_channels) - 1 - idx](
-                feat_high)
-            inner_outs[0] = feat_high
+        low_feat = inputs[0]
+        high_feat = self.down_sample1(low_feat)  # get the small-scale feature
 
-            upsample_feat = self.upsample(feat_high)
+        # fuse the global feature and the small-scale feature
+        high_feat = self.bi_fusion(high_feat)
 
-            fused_feat = torch.cat([upsample_feat, feat_low], 1) \
-                if self.fuse_type == 'cat' else (upsample_feat + feat_low)
-            inner_out = self.top_down_blocks[len(self.in_channels) - 1 - idx](
-                fused_feat)
-            inner_outs.insert(0, inner_out)
+        fuse_feat = low_feat + self.upsample(high_feat)
+        low_feat = self.fpn_block(fuse_feat)
 
-        # bottom-up path
-        outs = [inner_outs[0]]
-        for idx in range(len(self.in_channels) - 1):
-            feat_low = outs[-1]
-            feat_high = inner_outs[idx + 1]
-            downsample_feat = self.downsamples[idx](feat_low)
-            fused_feat = torch.cat([downsample_feat, feat_high], 1) \
-                if self.fuse_type == 'cat' else (downsample_feat + feat_high)
-            out = self.bottom_up_blocks[idx](fused_feat)
-            outs.append(out)
+        fuse_feat = high_feat + self.down_sample1(low_feat)
+        high_feat = self.pan_block(fuse_feat)
+
+        outs = [low_feat, high_feat]
 
         # out convs
         for idx, conv in enumerate(self.out_convs):
@@ -295,8 +448,7 @@ class DEIMV2TransformerDecoderLayer(DFINETransformerDecoderLayer):
                  *args,
                  use_gateway: bool = True,
                  ffn_cfg: OptConfigType = dict(
-                     embed_dims=256,
-                     feedforward_channels=512),
+                     embed_dims=256, feedforward_channels=512),
                  norm_cfg: OptConfigType = dict(type=RMSNorm, eps=1e-6),
                  **kwargs) -> None:
         self.use_gateway = use_gateway

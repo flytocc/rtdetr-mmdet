@@ -1,13 +1,11 @@
-_base_ = '../deim/deim_hgnetv2_l_8xb4-58e_coco.py'
+_base_ = '../deimv2/deimv2_hgnetv2_l_8xb4-58e_coco.py'
 
 pretrained = 'dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth'
 
 base_size_repeat = 3
-
 num_layers = _base_.model.decoder.num_layers  # 6
 
 model = dict(
-    type='DEIMV2',
     data_preprocessor=dict(
         batch_augments=[
             dict(
@@ -27,39 +25,33 @@ model = dict(
         interaction_indexes=[5, 8, 11],  # only need the [1/8, 1/16, 1/32]
         finetune=True,
         conv_inplane=64,
-        hidden_dim=256),
+        hidden_dim=_base_.base_dim),
     neck=None,
     encoder=dict(
         fpn_cfg=dict(
             type='DEIMV2FPN',
             fuse_type='sum',
-            expansion=1.25,
-            num_csp_blocks=4)),
+            num_csp_blocks=4,
+            expansion=1.25)),
     decoder=dict(
-        ref_hidden_dim=256,
-        ref_num_layers=3,
         layer_cfg=dict(
             ffn_cfg=dict(
-                _delete_=True, embed_dims=256,
                 # the implementation is different from official DEIMV2 repo
                 # `feedforward_channels` shuold be half of that in official
-                feedforward_channels=1024))),  # SwiGLUFFN
-    train_cfg=dict(
-        switch_assigner=dict(
-            switch_epoch=45,
-            assigner=dict(
-                type='HungarianAssigner',
-                match_costs=[
-                    dict(
-                        type='DEIMV2LossCost', iou_order_alpha=4.0, weight=1.)
-                ]))))
+                feedforward_channels=_base_.base_dim * 4))))  # SwiGLUFFN
 
+backbone_lr_mult = 0.02
 custom_keys = {
-    'in_proj_bias': dict(decay_mult=0),
-    'backbone.dinov3': dict(lr_mult=0.02),
-    'backbone.dinov3.norm.weight': dict(lr_mult=0.02, decay_mult=0),
-    'backbone.dinov3.norm.bias': dict(lr_mult=0.02, decay_mult=0),
-    'backbone.dinov3.patch_embed.proj.bias': dict(lr_mult=0.02, decay_mult=0),
+    'in_proj_bias':
+    dict(decay_mult=0),
+    'backbone.dinov3':
+    dict(lr_mult=backbone_lr_mult),
+    'backbone.dinov3.norm.weight':
+    dict(lr_mult=backbone_lr_mult, decay_mult=0),
+    'backbone.dinov3.norm.bias':
+    dict(lr_mult=backbone_lr_mult, decay_mult=0),
+    'backbone.dinov3.patch_embed.proj.bias':
+    dict(lr_mult=backbone_lr_mult, decay_mult=0),
     # TODO the following norm layers' weight will apply weight decay
     # 'backbone.norms': dict(decay_mult=1),
     # 'backbone.sta.stem.1.weight': dict(decay_mult=1),
@@ -68,7 +60,8 @@ custom_keys = {
     # 'backbone.sta.conv4.2.weight': dict(decay_mult=1),
 }
 custom_keys.update({
-    f'backbone.dinov3.blocks.{bid}.{name}': dict(lr_mult=0.02, decay_mult=0)
+    f'backbone.dinov3.blocks.{bid}.{name}':
+    dict(lr_mult=backbone_lr_mult, decay_mult=0)
     for name in [
         'norm1.weight', 'norm1.bias', 'norm2.weight', 'norm2.bias',
         'attn.qkv.bias', 'attn.qkv.bias_mask', 'attn.proj.bias',
@@ -98,7 +91,7 @@ data_preprocessor_stage2 = dict(
                         area_threshold=100,
                         num_objects=3,
                         with_expand=True,
-                        expand_ratios=[0.1, 0.25],
+                        expand_ratios=(0.1, 0.25),
                         ratio_range=(0.45, 0.55),
                         prob=0.5)
                 ],
@@ -122,7 +115,7 @@ data_preprocessor_stage3 = dict(
             area_threshold=100,
             num_objects=3,
             with_expand=True,
-            expand_ratios=[0.1, 0.25],
+            expand_ratios=(0.1, 0.25),
             ratio_range=(0.45, 0.55),
             prob=0.5),
         dict(

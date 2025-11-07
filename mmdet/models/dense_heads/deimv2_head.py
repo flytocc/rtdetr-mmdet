@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import copy
+from typing import Optional
 
 from mmcv.cnn import Linear
 from torch import nn
@@ -15,12 +16,17 @@ class DEIMV2Head(DFINEHead):
 
     def __init__(self,
                  *args,
-                 share_cls_layer: bool = False,
-                 share_reg_layer: bool = False,
+                 share_cls_layer: Optional[bool] = None,
+                 share_reg_layer: Optional[bool] = None,
+                 share_pred_layer: bool = False,
                  **kwargs) -> None:
+        if share_cls_layer is None:
+            share_cls_layer = share_pred_layer
+        if share_reg_layer is None:
+            share_reg_layer = share_pred_layer
         self.share_cls_layer = share_cls_layer
         self.share_reg_layer = share_reg_layer
-        super().__init__(*args, **kwargs)
+        super().__init__(*args, share_pred_layer=share_pred_layer, **kwargs)
 
     def _init_layers(self) -> None:
         """Initialize classification branch and regression branch of head."""
@@ -40,8 +46,8 @@ class DEIMV2Head(DFINEHead):
 
         fc_cls = _gen_cls_branch(self.embed_dims, self.cls_out_channels)
         cls_branches = [
-            copy.deepcopy(fc_cls) if self.share_cls_layer else
-                _gen_cls_branch(self.embed_dims, self.cls_out_channels)
+            copy.deepcopy(fc_cls) if self.share_cls_layer else _gen_cls_branch(
+                self.embed_dims, self.cls_out_channels)
             for _ in range(self.num_pred_layer - num_wide_layers - 1)
         ]
         cls_branches += [
@@ -56,7 +62,7 @@ class DEIMV2Head(DFINEHead):
         reg_branch = _gen_reg_branch(self.embed_dims, 4 * (self.reg_max + 1))
         reg_branches = [
             copy.deepcopy(reg_branch) if self.share_reg_layer else
-                _gen_reg_branch(self.embed_dims, 4 * (self.reg_max + 1))
+            _gen_reg_branch(self.embed_dims, 4 * (self.reg_max + 1))
             for _ in range(self.num_pred_layer - num_wide_layers - 1)
         ]
         reg_branches += [
