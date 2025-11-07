@@ -929,8 +929,8 @@ class BatchRandomChoice(nn.Module):
         for aug in transforms:
             if not isinstance(aug, Sequence):
                 aug = [aug]
-            self.transforms.append(nn.ModuleList(
-                [MODELS.build(transform) for transform in aug]))
+            self.transforms.append(
+                nn.ModuleList([MODELS.build(transform) for transform in aug]))
 
     def forward(
         self, inputs: Tensor, data_samples: List[DetDataSample]
@@ -951,7 +951,7 @@ class BatchCopyBlend(nn.Module):
             Defaults to 1.0.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  copyblend_type: Literal['blend', 'copy'] = 'blend',
                  area_threshold: float = 100,
                  num_objects: int = 3,
@@ -982,8 +982,7 @@ class BatchCopyBlend(nn.Module):
         batch_size, _, img_height, img_width = inputs.shape
 
         # get all valid objects in batch
-        bboxes = torch.cat(
-            [data_samples[i].gt_instances.bboxes for i in range(batch_size)])
+        bboxes = torch.cat([ds.gt_instances.bboxes for ds in data_samples])
         areas = (bboxes[..., 2:] - bboxes[..., :2]).prod(dim=-1)
         keep = areas >= self.area_threshold
 
@@ -991,14 +990,14 @@ class BatchCopyBlend(nn.Module):
         if not keep.any():
             return inputs, data_samples
 
-        labels = torch.cat(
-            [data_samples[i].gt_instances.labels for i in range(batch_size)])
-        image_idx = torch.cat(
-            [torch.full((len(data_samples[i].gt_instances),), i)
-             for i in range(batch_size)])
+        labels = torch.cat([ds.gt_instances.labels for ds in data_samples])
+        image_idx = torch.cat([
+            torch.full((len(ds.gt_instances), ), i, dtype=torch.long)
+            for i, ds in enumerate(data_samples)
+        ])
 
         objects_pool = defaultdict(list)
-        objects_pool['boxes'] = bboxes[keep].long().tolist()
+        objects_pool['boxes'] = bboxes[keep].round().long().tolist()
         objects_pool['image_idx'] = image_idx[keep.cpu()].tolist()
         objects_pool['labels'] = labels[keep]
 
@@ -1006,19 +1005,19 @@ class BatchCopyBlend(nn.Module):
         beta = round(random.uniform(*self.ratio_range), 6)
 
         # apply CopyBlend
-        batch_size = len(inputs)
         updated_inputs = inputs.clone()
-        updated_targets = data_samples.copy()
+        updated_targets = [ds.clone() for ds in data_samples]
+
+        pool_size = len(objects_pool['boxes'])
 
         for i in range(batch_size):
+            num_objects = min(self.num_objects, pool_size)
             # randomly decide the number of objects to blend
             if self.random_num_objects:
-                num_objects = random.randint(1, min(self.num_objects, len(objects_pool['boxes'])))
-            else:
-                num_objects = min(self.num_objects, len(objects_pool['boxes']))
+                num_objects = random.randint(1, num_objects)
 
             # randomly select objects to blend
-            selected_indices = random.sample(range(len(objects_pool['boxes'])), num_objects)
+            selected_indices = random.sample(range(pool_size), num_objects)
 
             blend_boxes = []
             blend_labels = []
@@ -1030,11 +1029,13 @@ class BatchCopyBlend(nn.Module):
                 source_idx = objects_pool['image_idx'][idx]
 
                 # calculate source object size and position
-                x1_src, x2_src, y1_src, y2_src = box
+                x1_src, y1_src, x2_src, y2_src = box
 
                 # check if source object is out of bound
-                x1_src, y1_src = max(x1_src, 0), max(y1_src, 0)
-                x2_src, y2_src = min(x2_src, img_width), min(y2_src, img_height)
+                x1_src = max(x1_src, 0)
+                y1_src = max(y1_src, 0)
+                x2_src = min(x2_src, img_width)
+                y2_src = min(y2_src, img_height)
                 new_w_px, new_h_px = x2_src - x1_src, y2_src - y1_src
 
                 # check if source object is valid
@@ -1042,10 +1043,13 @@ class BatchCopyBlend(nn.Module):
                     continue
 
                 # randomly determine blend position
-                x1 = random.randint(0, img_width - new_w_px) if new_w_px < img_width else 0
-                y1 = random.randint(0, img_height - new_h_px) if new_h_px < img_height else 0
+                x1 = random.randint(0, img_width -
+                                    new_w_px) if new_w_px < img_width else 0
+                y1 = random.randint(0, img_height -
+                                    new_h_px) if new_h_px < img_height else 0
 
-                # after the above limit, [x2, y2] will not be out of bound, so no need to check
+                # after the above limit, [x2, y2] will not be out of bound,
+                # so no need to check
                 x2, y2 = x1 + new_w_px, y1 + new_h_px
 
                 # add to blend list - use original unexpanded box
@@ -1054,28 +1058,43 @@ class BatchCopyBlend(nn.Module):
 
                 # handle expanded area
                 if self.with_expand:
-                    alpha = round(random.uniform(self.expand_ratios[0], self.expand_ratios[1]), 6)
-                    expand_w, expand_h = int(new_w_px * alpha), int(new_h_px * alpha)
+                    alpha = round(random.uniform(*self.expand_ratios), 6)
+                    expand_w = int(new_w_px * alpha)
+                    expand_h = int(new_h_px * alpha)
 
                     # check if out of bound: get the best offset in GT image
-                    x1_expand, y1_expand = x1_src - max(x1_src - expand_w, 0), y1_src - max(y1_src - expand_h, 0)
-                    x2_expand, y2_expand = min(x2_src + expand_w, img_width) - x2_src, min(y2_src + expand_h, img_height) - y2_src
+                    x1_expand = x1_src - max(x1_src - expand_w, 0)
+                    y1_expand = y1_src - max(y1_src - expand_h, 0)
+                    x2_expand = min(x2_src + expand_w, img_width) - x2_src
+                    y2_expand = min(y2_src + expand_h, img_height) - y2_src
 
-                    # check if out of bound: whether the expanded area is out of bound in blend image
-                    new_x1_expand, new_y1_expand = x1 - max(x1 - x1_expand, 0), y1 - max(y1 - y1_expand, 0)
-                    new_x2_expand, new_y2_expand = min(x2 + x2_expand, img_width) - x2, min(y2 + y2_expand, img_height) - y2
+                    # check if out of bound: whether the expanded area is
+                    # out of bound in blend image
+                    new_x1_expand = x1 - max(x1 - x1_expand, 0)
+                    new_y1_expand = y1 - max(y1 - y1_expand, 0)
+                    new_x2_expand = min(x2 + x2_expand, img_width) - x2
+                    new_y2_expand = min(y2 + y2_expand, img_height) - y2
 
                     # update
-                    x1_src, y1_src, x2_src, y2_src = x1_src - new_x1_expand, y1_src - new_y1_expand, x2_src + new_x2_expand, y2_src + new_y2_expand
-                    x1, y1, x2, y2 = x1 - new_x1_expand, y1 - new_y1_expand, x2 + new_x2_expand, y2 + new_y2_expand
+                    x1_src = x1_src - new_x1_expand
+                    y1_src = y1_src - new_y1_expand
+                    x2_src = x2_src + new_x2_expand
+                    y2_src = y2_src + new_y2_expand
+                    x1, y1 = x1 - new_x1_expand, y1 - new_y1_expand
+                    x2, y2 = x2 + new_x2_expand, y2 + new_y2_expand
 
                 # blend original area first
-                copy_patch_orig = inputs[source_idx, :, y1_src:y2_src, x1_src:x2_src]
+                copy_patch_orig = \
+                    inputs[source_idx, :, y1_src:y2_src, x1_src:x2_src]
                 if self.copyblend_type == 'blend':
-                    blended_patch = updated_inputs[i, :, y1:y2, x1:x2] * beta + copy_patch_orig * (1 - beta)
+                    blended_patch = updated_inputs[i, :, y1:y2, x1:x2] \
+                        * beta + copy_patch_orig * (1 - beta)
                     updated_inputs[i, :, y1:y2, x1:x2] = blended_patch
                 else:
                     updated_inputs[i, :, y1:y2, x1:x2] = copy_patch_orig
+                    raise NotImplementedError(
+                        '#TODO Determine whether the original target that was '
+                        'overwritten needs to be deleted.')
 
             # add blended objects to targets
             if len(blend_boxes) > 0:
