@@ -6,12 +6,13 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 from mmcv.cnn import ConvModule, build_norm_layer
-from mmengine.model import BaseModule
+from mmengine.model import BaseModule, ModuleList
 from torch import Tensor, nn
 
 from mmdet.models.layers.transformer.detr_layers import DetrTransformerEncoder
 from mmdet.registry import MODELS
 from mmdet.utils import ConfigType, OptConfigType, OptMultiConfig
+from .deformable_detr_layers import DeformableDetrTransformerDecoderLayer
 from .dino_layers import DinoTransformerDecoder
 from .utils import MLP
 
@@ -582,8 +583,8 @@ class RTDETRHybridEncoder(BaseModule):
                     device=src_flatten.device)
             memory = self.transformer_blocks[i](
                 src_flatten, query_pos=pos_embed, key_padding_mask=None)
-            outs[enc_ind] = memory.permute(0, 2, 1).contiguous().reshape(
-                b, c, h, w)
+            outs[enc_ind] = memory.permute(0, 2,
+                                           1).contiguous().reshape(b, c, h, w)
 
         return tuple(outs)
 
@@ -599,7 +600,14 @@ class RTDETRTransformerDecoder(DinoTransformerDecoder):
 
     def _init_layers(self) -> None:
         """Initialize decoder layers."""
-        super()._init_layers()
+        self.layers = ModuleList([
+            DeformableDetrTransformerDecoderLayer(**self.layer_cfg)
+            for _ in range(self.num_layers)
+        ])
+        self.embed_dims = self.layers[0].embed_dims
+        if self.post_norm_cfg is not None:
+            raise ValueError('There is not post_norm in '
+                             f'{self._get_name()}')
         self.ref_point_head = MLP(4, self.embed_dims * 2, self.embed_dims, 2)
         self.norm = nn.Identity()  # without norm
 
@@ -687,7 +695,8 @@ class RTDETRTransformerDecoder(DinoTransformerDecoder):
             if self.training or lid == eval_idx:
                 norm_query = self.norm(query)
                 hidden_states.append((lid, norm_query))
-                all_layers_outputs_classes.append(cls_branches[lid](norm_query))
+                all_layers_outputs_classes.append(
+                    cls_branches[lid](norm_query))
                 all_layers_outputs_coords.append(
                     (tmp + unact_reference_points).sigmoid())
 
