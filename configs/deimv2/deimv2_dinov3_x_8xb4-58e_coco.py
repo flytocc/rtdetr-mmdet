@@ -1,5 +1,7 @@
 _base_ = '../deimv2/deimv2_hgnetv2_l_8xb4-58e_coco.py'
 
+# We use DINOv3-S and S+ as backbone, you can download them following the guide
+# in [DINOv3](https://github.com/facebookresearch/dinov3).
 pretrained = 'dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth'
 
 base_size_repeat = 3

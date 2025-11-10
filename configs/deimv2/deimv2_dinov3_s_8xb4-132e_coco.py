@@ -1,5 +1,7 @@
 _base_ = '../deimv2/deimv2_hgnetv2_s_8xb4-132e_coco.py'
 
+# We use our ViT-Tiny distilled from DINOv3-S, you can download them from
+# [ViT-Tiny](https://drive.google.com/file/d/1YMTq_woOLjAcZnHSYNTsNg7f0ahj5LPs/view?usp=sharing)  # noqa
 pretrained = 'vitt_distill.pt'
 
 base_dim = 192
@@ -47,13 +49,13 @@ backbone_lr_mult = 0.05
 custom_keys = {
     'in_proj_bias':
     dict(decay_mult=0),
-    'backbone.dinov3':
+    'backbone.dinov3._model':
     dict(lr_mult=backbone_lr_mult),
-    'backbone.dinov3.norm.weight':
+    'backbone.dinov3._model.norm.weight':
     dict(lr_mult=backbone_lr_mult, decay_mult=0),
-    'backbone.dinov3.norm.bias':
+    'backbone.dinov3._model.norm.bias':
     dict(lr_mult=backbone_lr_mult, decay_mult=0),
-    'backbone.dinov3.patch_embed.proj.bias':
+    'backbone.dinov3._model.patch_embed.proj.bias':
     dict(lr_mult=backbone_lr_mult, decay_mult=0),
     # TODO the following norm layers' weight will apply weight decay
     # 'backbone.norms': dict(decay_mult=1),
@@ -63,7 +65,7 @@ custom_keys = {
     # 'backbone.sta.conv4.2.weight': dict(decay_mult=1),
 }
 custom_keys.update({
-    f'backbone.dinov3.blocks.{bid}.{name}':
+    f'backbone.dinov3._model.blocks.{bid}.{name}':
     dict(lr_mult=backbone_lr_mult, decay_mult=0)
     for name in [
         'norm1.weight', 'norm1.bias', 'norm2.weight', 'norm2.bias',
