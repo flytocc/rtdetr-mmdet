@@ -11,3 +11,7 @@ model = dict(
         layer_cfg=dict(
             self_attn_cfg=dict(embed_dims=384),
             ffn_cfg=dict(embed_dims=384, feedforward_channels=2048))))
+
+# optimizer
+optim_wrapper = dict(
+    paramwise_cfg=dict(custom_keys={'backbone': dict(lr_mult=0.01)}))

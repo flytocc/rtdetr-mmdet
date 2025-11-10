@@ -1,5 +1,15 @@
 _base_ = '../rtdetr/rtdetr_r50vd_8xb2-72e_coco.py'
 
+model = dict(
+    data_preprocessor=dict(batch_augments=[
+        dict(
+            type='BatchSyncRandomResize',
+            interval=1,
+            interpolations='nearest',
+            random_sizes=[480, 512, 544, 576, 608] +
+            [640] * _base_.base_size_repeat + [672, 704, 736, 768, 800])
+    ]))
+
 data_preprocessor_stage2 = dict(
     type='DetDataPreprocessor',
     mean=[0, 0, 0],
@@ -11,14 +21,10 @@ train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
     dict(type='LoadAnnotations', with_bbox=True),
     dict(
-        type='RandomApply',
-        transforms=dict(
-            type='PhotoMetricDistortion',
-            hue_delta=12.75,
-            swap_channel=False,
-            clip_val=255,
-            force_float32=False),
-        prob=0.8),
+        type='PhotoMetricDistortion',
+        hue_delta=12.75,
+        clip_val=255,
+        force_float32=False),
     dict(type='Expand', mean=[0, 0, 0]),
     dict(
         type='RandomApply',
@@ -52,11 +58,12 @@ test_pipeline = [
                    'scale_factor'))
 ]
 
-train_dataloader = dict(dataset=dict(pipeline=train_pipeline))
+train_dataloader = dict(
+    dataset=dict(filter_cfg=None, pipeline=train_pipeline))
 val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
-stage2_num_epochs = 1
+stage2_switch_epoch = 71
 custom_hooks = [
     dict(
         type='EMAHook',
@@ -66,10 +73,10 @@ custom_hooks = [
         priority=49),
     dict(
         type='DataPreprocessorSwitchHook',
-        switch_epoch=_base_.max_epochs - stage2_num_epochs,
+        switch_epoch=stage2_switch_epoch,
         switch_data_preprocessor=data_preprocessor_stage2),
     dict(
         type='PipelineSwitchHook',
-        switch_epoch=_base_.max_epochs - stage2_num_epochs,
+        switch_epoch=stage2_switch_epoch,
         switch_pipeline=train_pipeline_stage2)
 ]
