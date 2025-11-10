@@ -20,7 +20,7 @@ optim_wrapper = dict(paramwise_cfg=dict(custom_keys=dict(_delete_=True)))
 max_epochs = 120
 train_cfg = dict(max_epochs=max_epochs)
 
-stage2_num_epochs = 3
+stage2_switch_epoch = 117
 custom_hooks = [
     dict(
         type='EMAHook',
@@ -30,10 +30,10 @@ custom_hooks = [
         priority=49),
     dict(
         type='DataPreprocessorSwitchHook',
-        switch_epoch=max_epochs - stage2_num_epochs,
+        switch_epoch=stage2_switch_epoch,
         switch_data_preprocessor=_base_.data_preprocessor_stage2),
     dict(
         type='PipelineSwitchHook',
-        switch_epoch=max_epochs - stage2_num_epochs,
+        switch_epoch=stage2_switch_epoch,
         switch_pipeline=_base_.train_pipeline_stage2)
 ]
