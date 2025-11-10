@@ -14,7 +14,7 @@ try:
     from mmpretrain.models.utils.batch_augments import RandomBatchAugment
     from mmpretrain.structures import (batch_label_to_onehot, cat_batch_labels,
                                        tensor_split)
-except ImportError:
+except (ImportError, TypeError):
     mmpretrain = None
 
 
