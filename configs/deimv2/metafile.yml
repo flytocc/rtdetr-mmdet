@@ -1,0 +1,117 @@
+Collections:
+  - Name: DEIM v2
+    Metadata:
+      Training Data: COCO
+      Training Techniques:
+        - AdamW
+        - Weight Decay
+        - Multi Scale Train
+        - Gradient Clip
+      Training Resources: 8x A100 GPUs
+      Architecture:
+        - DINOv3 / HGNetV2
+        - Transformer
+    Paper:
+      URL: https://arxiv.org/abs/2509.20787
+      Title: 'Real-Time Object Detection Meets DINOv3'
+    README: 
+    Code:
+      URL: 
+      Version: v3.3.0
+
+Models:
+  - Name: deimv2_hgnetv2_atto_8xb16-500e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_hgnetv2_atto_8xb16-500e_coco.py
+    Metadata:
+      Epochs: 500
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 23.8
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_hgnetv2_atto_8xb16-500e_coco_3a7c18fb.pth
+
+  - Name: deimv2_hgnetv2_femto_8xb16-500e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_hgnetv2_femto_8xb16-500e_coco.py
+    Metadata:
+      Epochs: 500
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 31.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_hgnetv2_femto_8xb16-500e_coco_b47c1701.pth
+
+  - Name: deimv2_hgnetv2_pico_8xb16-500e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_hgnetv2_pico_8xb16-500e_coco.py
+    Metadata:
+      Epochs: 500
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 38.5
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_hgnetv2_pico_8xb16-500e_coco_46ee862e.pth
+
+  - Name: deimv2_hgnetv2_n_8xb16-160e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_hgnetv2_n_8xb16-160e_coco.py
+    Metadata:
+      Epochs: 160
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 43.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_hgnetv2_n_8xb16-160e_coco_65a3d9db.pth
+
+  - Name: deimv2_dinov3_s_8xb4-132e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_dinov3_s_8xb4-132e_coco.py
+    Metadata:
+      Epochs: 132
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 50.9
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_dinov3_s_8xb4-132e_coco_0fc93a62.pth
+
+  - Name: deimv2_dinov3_m_8xb4-102e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_dinov3_m_8xb4-102e_coco.py
+    Metadata:
+      Epochs: 102
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 53.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_dinov3_m_8xb4-102e_coco_5eeb13f3.pth
+
+  - Name: deimv2_dinov3_l_8xb4-68e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_dinov3_l_8xb4-68e_coco.py
+    Metadata:
+      Epochs: 68
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 56.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_dinov3_l_8xb4-68e_coco_fa4bbb2d.pth
+
+  - Name: deimv2_dinov3_x_8xb4-58e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_dinov3_x_8xb4-58e_coco.py
+    Metadata:
+      Epochs: 58
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 57.8
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_dinov3_x_8xb4-58e_coco_061e5a6d.pth

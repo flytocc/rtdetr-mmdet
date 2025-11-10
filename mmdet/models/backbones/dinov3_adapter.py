@@ -19,6 +19,7 @@ import torch.nn.functional as F
 from mmdet.registry import MODELS
 
 from .dinov3 import DinoVisionTransformer
+from .vit_tiny import VisionTransformer
 
 
 class SpatialPriorModulev2(nn.Module):
@@ -89,11 +90,16 @@ class DINOv3STAs(nn.Module):
             self.dinov3 = DinoVisionTransformer(name=name)
             if weights_path is not None and os.path.exists(weights_path):
                 print(f'Loading ckpt from {weights_path}...')
-                self.dinov3.load_state_dict(torch.load(weights_path, map_location='cpu'))
+                self.dinov3.load_state_dict(torch.load(weights_path, 'cpu'))
             else:
                 print('Training DINOv3 from scratch...')
         else:
-            raise NotImplementedError(f'Backbone {name} is not implemented!')
+            self.dinov3 =  VisionTransformer(embed_dim=embed_dim, num_heads=num_heads, return_layers=interaction_indexes)
+            if weights_path is not None and os.path.exists(weights_path):
+                print(f'Loading ckpt from {weights_path}...')
+                self.dinov3._model.load_state_dict(torch.load(weights_path))
+            else:
+                print('Training ViT-Tiny from scratch...')
 
         embed_dim = self.dinov3.embed_dim
         self.interaction_indexes = interaction_indexes

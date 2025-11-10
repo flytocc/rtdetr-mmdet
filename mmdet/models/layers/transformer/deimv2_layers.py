@@ -5,14 +5,17 @@ from typing import List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
-from mmcv.cnn import ConvModule, build_activation_layer
+from mmcv.cnn import ConvModule, build_norm_layer
+from mmcv.cnn.bricks.transformer import MultiheadAttention
+from mmcv.ops import MultiScaleDeformableAttention
 from mmengine.model import BaseModule, ModuleList
 from torch import Tensor, nn
 
 from mmdet.registry import MODELS
 from mmdet.utils import ConfigType, OptConfigType, OptMultiConfig
 from .dfine_layers import (DFINEFPN, LQE, DFINETransformerDecoder,
-                           DFINETransformerDecoderLayer, Integral,
+                           DFINETransformerDecoderLayer, Gate, Integral,
+                           MultiNumPointsMultiScaleDeformableAttention,
                            RepNCSPELAN4, distance2bbox)
 from .rtdetr_layers import CSPLayer
 from .utils import MLP
@@ -271,121 +274,6 @@ class DEIMV2LiteFPN(DFINEFPN):
                 Identity())
 
 
-@MODELS.register_module()
-class DEIMV2LiteEncoder(BaseModule):
-    """LiteEncoder of DEIM v2.
-
-    Args:
-        in_channels (List[int], optional): The input channels of the
-            feature maps. Defaults to [256, 256, 256].
-        out_channels (int, optional): The output dimension of the MLP.
-            Defaults to 256.
-        num_csp_blocks (int): Number of bottlenecks in CSPLayer.
-            Defaults to 3.
-        expansion (float, optional): The expansion of the CSPLayer.
-            Defaults to 1.0.
-        upsample_cfg (dict): Config dict for interpolate layer.
-            Default: `dict(scale_factor=2, mode='nearest')`
-        conv_cfg (dict, optional): Config dict for convolution layer.
-            Default: None, which means using conv2d.
-        norm_cfg (:obj:`ConfigDict` or dict, optional): The config dict for
-            normalization layers. Defaults to dict(type='BN').
-        act_cfg (:obj:`ConfigDict` or dict, optional): The config dict for
-            activation layers. Defaults to dict(type='SiLU', inplace=True).
-        init_cfg (:obj:`ConfigDict` or dict or list[dict] or
-            list[:obj:`ConfigDict`], optional): Initialization config dict.
-    """
-
-    def __init__(
-        self,
-        in_channels: List[int] = [256, 256, 256],
-        out_channels: int = 256,
-        num_csp_blocks: int = 3,
-        expansion: float = 1.0,
-        upsample_cfg: ConfigType = dict(scale_factor=2, mode='nearest'),
-        conv_cfg: OptConfigType = None,
-        norm_cfg: OptConfigType = dict(type='BN', requires_grad=True),
-        act_cfg: OptConfigType = dict(type='SiLU', inplace=True),
-        init_cfg: OptMultiConfig = dict(
-            type='Kaiming',
-            layer='Conv2d',
-            a=math.sqrt(5),
-            distribution='uniform',
-            mode='fan_in',
-            nonlinearity='leaky_relu')
-    ) -> None:
-        super(DFINEFPN, self).__init__(init_cfg=init_cfg)
-        self.in_channels = in_channels
-        self.out_channels = out_channels
-
-        down_sample = nn.Sequential(
-            nn.AvgPool2d(kernel_size=3, stride=2, padding=1),
-            nn.Conv2d(in_channels[0], in_channels[0], 1, bias=False),
-            nn.BatchNorm2d(in_channels[0]), build_activation_layer(act_cfg))
-        self.down_sample1 = deepcopy(down_sample)
-        self.down_sample2 = deepcopy(down_sample)
-
-        # Bi-Fusion
-        self.bi_fusion = GAP_Fusion(in_channels[0], in_channels[0], act_cfg)
-
-        self.upsample = nn.Upsample(**upsample_cfg)
-
-        # fuse block
-        fuse_block = RepNCSPELAN4(
-            in_channels[0],
-            in_channels[0],
-            hidden_channels=in_channels[0] * 2,
-            num_blocks=num_csp_blocks,
-            expand_ratio=expansion,
-            conv_cfg=conv_cfg,
-            norm_cfg=norm_cfg,
-            act_cfg=act_cfg)
-        self.fpn_block = deepcopy(fuse_block)
-        self.pan_block = deepcopy(fuse_block)
-
-        self.out_convs = nn.ModuleList()
-        for i in range(len(in_channels)):
-            self.out_convs.append(
-                ConvModule(
-                    in_channels[i],
-                    out_channels,
-                    1,
-                    conv_cfg=conv_cfg,
-                    norm_cfg=norm_cfg,
-                    act_cfg=None) if in_channels[i] != out_channels else nn.
-                Identity())
-
-    def forward(self, inputs: Tuple[Tensor]) -> Tuple[Tensor]:
-        """
-        Args:
-            inputs (tuple[Tensor]): input features.
-
-        Returns:
-            tuple[Tensor]: FPN features.
-        """
-        assert len(inputs) == len(self.in_channels) == 1
-
-        low_feat = inputs[0]
-        high_feat = self.down_sample1(low_feat)  # get the small-scale feature
-
-        # fuse the global feature and the small-scale feature
-        high_feat = self.bi_fusion(high_feat)
-
-        fuse_feat = low_feat + self.upsample(high_feat)
-        low_feat = self.fpn_block(fuse_feat)
-
-        fuse_feat = high_feat + self.down_sample1(low_feat)
-        high_feat = self.pan_block(fuse_feat)
-
-        outs = [low_feat, high_feat]
-
-        # out convs
-        for idx, conv in enumerate(self.out_convs):
-            outs[idx] = conv(outs[idx])
-
-        return tuple(outs)
-
-
 class RMSNorm(nn.Module):
 
     def __init__(self, num_features: int, eps: float = 1e-6):
@@ -456,10 +344,27 @@ class DEIMV2TransformerDecoderLayer(DFINETransformerDecoderLayer):
 
     def _init_layers(self) -> None:
         """Initialize self_attn, cross-attn, ffn, and norms."""
-        super()._init_layers()
+        self.self_attn = MultiheadAttention(**self.self_attn_cfg)
+
+        num_points = self.cross_attn_cfg.get('num_points', None)
+        if num_points is None or isinstance(num_points, int):
+            self.cross_attn = MultiScaleDeformableAttention(
+                **self.cross_attn_cfg)
+        else:
+            self.cross_attn = MultiNumPointsMultiScaleDeformableAttention(
+                **self.cross_attn_cfg)
+        self.cross_attn.value_proj = nn.Identity()
+        self.cross_attn.output_proj = nn.Identity()
+
+        self.embed_dims = self.self_attn.embed_dims
         self.ffn = SwiGLUFFN(**self.ffn_cfg)
-        if not self.use_gateway:
-            del self.gateway
+        norms_list = [
+            build_norm_layer(self.norm_cfg, self.embed_dims)[1]
+            for _ in range(3)
+        ]
+        self.norms = ModuleList(norms_list)
+        if self.use_gateway:
+            self.gateway = Gate(self.embed_dims)
 
     def forward(self,
                 query: Tensor,

@@ -14,7 +14,7 @@ Collections:
     Paper:
       URL: https://arxiv.org/abs/2410.13842
       Title: 'D-FINE: REDEFINE REGRESSION TASK IN DETRS AS FINE-GRAINED DISTRIBUTION REFINEMENT'
-    README: configs/dfine/README.md
+    README: 
     Code:
       URL: https://github.com/flytocc/rtdetr-mmdet/blob/5f2aa027ebe85d750cf746f7c1c1598b996c5d17/mmdet/models/detectors/dfine.py#L16
       Version: v3.3.0

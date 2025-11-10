@@ -14,9 +14,9 @@ Collections:
     Paper:
       URL: https://arxiv.org/abs/2410.13842
       Title: 'DEIM: DETR with Improved Matching for Fast Convergence'
-    README: configs/deim/README.md
+    README: 
     Code:
-      URL: https://github.com/flytocc/rtdetr-mmdet/blob/5f2aa027ebe85d750cf746f7c1c1598b996c5d17/mmdet/models/detectors/deim.py#L12
+      URL: https://github.com/flytocc/rtdetr-mmdet/blob/8da6c68c4e5d4d8aae4438c7d59fd222cba871a5/mmdet/models/detectors/deim.py#L54
       Version: v3.3.0
 
 Models:
