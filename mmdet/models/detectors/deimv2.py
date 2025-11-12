@@ -55,23 +55,11 @@ class DEIMV2(DEIMDFINE):
 
     def _init_layers(self) -> None:
         """Initialize layers except for backbone, neck and bbox_head."""
-        ref_act_cfg = self.decoder.pop('ref_act_cfg',
-                                       dict(type='SiLU', inplace=True))
-        ref_hidden_dim = self.decoder.pop('ref_hidden_dim', None)
-        ref_num_layers = self.decoder.pop('ref_num_layers', 2)
-
         self.encoder = RTDETRHybridEncoder(**self.encoder)
         self.decoder = DEIMV2TransformerDecoder(**self.decoder)
         self.embed_dims = self.decoder.embed_dims
         self.memory_trans_fc = nn.Identity()
         self.memory_trans_norm = nn.Identity()
-
-        self.decoder.ref_point_head = MLP(
-            4,
-            ref_hidden_dim or self.decoder.embed_dims * 2,
-            self.decoder.embed_dims,
-            ref_num_layers,
-            act_cfg=ref_act_cfg)
 
     def init_weights(self) -> None:
         """Initialize weights for Transformer and other components."""

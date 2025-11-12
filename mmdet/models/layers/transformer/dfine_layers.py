@@ -829,11 +829,16 @@ class DFINETransformerDecoderLayer(DeformableDetrTransformerDecoderLayer):
 
 class LQE(nn.Module):
 
-    def __init__(self, k: int, hidden_dim: int, num_layers: int, reg_max: int):
+    def __init__(self,
+                 k: int,
+                 hidden_dim: int,
+                 num_layers: int,
+                 reg_max: int,
+                 act_cfg: ConfigType = dict(type='ReLU', inplace=True)):
         super(LQE, self).__init__()
         self.k = k
         self.reg_max = reg_max
-        self.reg_conf = MLP(4 * (k + 1), hidden_dim, 1, num_layers)
+        self.reg_conf = MLP(4 * (k + 1), hidden_dim, 1, num_layers, act_cfg)
         self.init_weights()
 
     def init_weights(self) -> None:
@@ -898,6 +903,10 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                  layer_scale: float = 1.0,
                  eval_idx: int = -1,
                  num_layers: int = 6,
+                 ref_num_layers: int = 2,
+                 ref_hidden_dim: Optional[int] = None,
+                 ref_act_cfg: ConfigType = dict(type='ReLU', inplace=True),
+                 lqe_act_cfg: ConfigType = dict(type='ReLU', inplace=True),
                  remove_cross_attn_value_proj_and_output_proj: bool = True,
                  **kwargs) -> None:
         if eval_idx < 0:
@@ -907,6 +916,10 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
         self.reg_max = reg_max
         self.reg_scale = reg_scale
         self.layer_scale = layer_scale
+        self.ref_num_layers = ref_num_layers
+        self.ref_hidden_dim = ref_hidden_dim
+        self.ref_act_cfg = ref_act_cfg
+        self.lqe_act_cfg = lqe_act_cfg
         self.remove_cross_attn_value_proj_and_output_proj = \
             remove_cross_attn_value_proj_and_output_proj
         super().__init__(*args, num_layers=num_layers, **kwargs)
@@ -948,11 +961,18 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             raise ValueError('There is not post_norm in '
                              f'{self._get_name()}')
 
-        self.ref_point_head = MLP(4, self.embed_dims * 2, self.embed_dims, 2)
+        self.ref_point_head = MLP(
+            4,
+            self.ref_hidden_dim or self.embed_dims * 2,
+            self.embed_dims,
+            self.ref_num_layers,
+            act_cfg=self.ref_act_cfg)
 
         self.integral = Integral(self.reg_max, self.reg_scale)
-        self.lqe_layers = ModuleList(
-            [LQE(4, 64, 2, self.reg_max) for _ in range(self.num_layers)])
+        self.lqe_layers = ModuleList([
+            LQE(4, 64, 2, self.reg_max, act_cfg=self.lqe_act_cfg)
+            for _ in range(self.num_layers)
+        ])
 
     def forward(self, query: Tensor, value: Tensor, key_padding_mask: Tensor,
                 self_attn_mask: Tensor, reference_points: Tensor,

@@ -115,7 +115,7 @@ class DEIMV2ChannelMapper(BaseModule):
         kernel_size: int = 3,
         conv_cfg: OptConfigType = None,
         norm_cfg: OptConfigType = None,
-        act_cfg: OptConfigType = dict(type='ReLU'),
+        act_cfg: OptConfigType = dict(type='ReLU', inplace=True),
         extra_act_cfg: OptConfigType = dict(type='SiLU', inplace=True),
         bias: Union[bool, str] = 'auto',
         num_outs: int = None,
@@ -287,8 +287,8 @@ class RMSNorm(nn.Module):
 
     def forward(self, x):
         if hasattr(torch, 'rms_norm'):  # since 2.4
-            return torch.rms_norm(
-                x, (self.num_features,), self.scale, self.eps)
+            return torch.rms_norm(x, (self.num_features, ), self.scale,
+                                  self.eps)
 
         output = self._norm(x.float()).type_as(x)
         output = output * self.scale
@@ -493,11 +493,18 @@ class DEIMV2TransformerDecoder(DFINETransformerDecoder):
             raise ValueError('There is not post_norm in '
                              f'{self._get_name()}')
 
-        self.ref_point_head = MLP(4, self.embed_dims * 2, self.embed_dims, 2)
+        self.ref_point_head = MLP(
+            4,
+            self.ref_hidden_dim or self.embed_dims * 2,
+            self.embed_dims,
+            self.ref_num_layers,
+            act_cfg=self.ref_act_cfg)
 
         self.integral = Integral(self.reg_max, self.reg_scale)
-        self.lqe_layers = ModuleList(
-            [LQE(4, 64, 2, self.reg_max) for _ in range(self.num_layers)])
+        self.lqe_layers = ModuleList([
+            LQE(4, 64, 2, self.reg_max, act_cfg=self.lqe_act_cfg)
+            for _ in range(self.num_layers)
+        ])
 
     def forward(self, query: Tensor, value: Tensor, key_padding_mask: Tensor,
                 self_attn_mask: Tensor, reference_points: Tensor,

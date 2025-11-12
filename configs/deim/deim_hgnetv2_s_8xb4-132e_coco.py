@@ -4,7 +4,9 @@ act_cfg = dict(type='SiLU', inplace=True)
 model = dict(
     type='DEIMDFINE',
     decoder=dict(
-        ref_act_cfg=act_cfg, layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
+        ref_act_cfg=act_cfg,
+        lqe_act_cfg=act_cfg,
+        layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
     bbox_head=dict(
         reg_act_cfg=act_cfg,
         loss_cls=dict(type='DEIMMalLoss', alpha=1.0, gamma=1.5)))

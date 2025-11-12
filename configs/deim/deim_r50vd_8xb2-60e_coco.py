@@ -6,9 +6,10 @@ model = dict(
     backbone=dict(
         frozen_stages=-1, norm_cfg=dict(requires_grad=True), norm_eval=False),
     decoder=dict(
-        ref_act_cfg=act_cfg,
         ref_hidden_dim=256,
         ref_num_layers=3,
+        ref_act_cfg=act_cfg,
+        lqe_act_cfg=act_cfg,
         layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
     bbox_head=dict(
         reg_act_cfg=act_cfg,
