@@ -18,11 +18,17 @@ from mmcv.transforms.utils import avoid_cache_randomness, cache_randomness
 from mmengine.dataset import BaseDataset
 from mmengine.utils import is_str
 from numpy import random
+from PIL import Image
 
 from mmdet.registry import TRANSFORMS
 from mmdet.structures.bbox import HorizontalBoxes, autocast_box_type
 from mmdet.structures.mask import BitmapMasks, PolygonMasks
 from mmdet.utils import log_img_scale
+
+try:
+    import torchvision.transforms.functional as tvF
+except ImportError:
+    tvF = None
 
 try:
     from imagecorruptions import corrupt
@@ -1224,6 +1230,71 @@ class PhotoMetricDistortion(BaseTransform):
         repr_str += f'{(self.saturation_lower, self.saturation_upper)}, '
         repr_str += f'hue_delta={self.hue_delta})'
         return repr_str
+
+
+@TRANSFORMS.register_module()
+class ColorJitter(PhotoMetricDistortion):
+
+    def __init__(self, *args, **kwargs) -> None:
+        if tvF is None:
+            raise RuntimeError('torchvision is not installed')
+        super().__init__(*args, **kwargs)
+
+    def transform(self, results: dict) -> dict:
+        """Transform function to perform photometric distortion on images.
+
+        Args:
+            results (dict): Result dict from loading pipeline.
+
+        Returns:
+            dict: Result dict with images distorted.
+        """
+        assert 'img' in results, '`img` is not found in results'
+        img = results['img']
+        ori_dtype = img.dtype
+        # np.ndarray to Image.Image
+        img = img.clip[..., ::-1]
+        img = Image.fromarray(img.clip(0, 255).astype(np.uint8), mode='RGB')
+
+        (mode, brightness_flag, contrast_flag, saturation_flag, hue_flag,
+         swap_flag, delta_value, alpha_value, saturation_value, hue_value,
+         swap_value) = self._random_flags()
+
+        # random brightness
+        if brightness_flag:
+            img = tvF.adjust_brightness(img, 1 + delta_value / 256)
+
+        # mode == 0 --> do random contrast first
+        # mode == 1 --> do random contrast last
+        if mode == 1:
+            if contrast_flag:
+                img = tvF.adjust_contrast(img, alpha_value)
+
+        # random saturation
+        if saturation_flag:
+            img = tvF.adjust_saturation(img, saturation_value)
+
+        # random hue
+        if hue_flag:
+            img = tvF.adjust_hue(img, hue_value / 256)
+
+        # random contrast
+        if mode == 0:
+            if contrast_flag:
+                img = tvF.adjust_contrast(img, alpha_value)
+
+        # Image.Image to np.ndarray
+        img = np.asarray(img)
+
+        # randomly swap channels
+        if swap_flag:
+            img = img[..., swap_flag]
+
+        if not self.force_float32:
+            img = img.astype(ori_dtype, copy=False)
+
+        results['img'] = img
+        return results
 
 
 @TRANSFORMS.register_module()
