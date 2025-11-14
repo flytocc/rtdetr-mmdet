@@ -734,8 +734,8 @@ class ConditionalAttention(BaseModule):
 
 
 class MLP(BaseModule):
-    """Very simple multi-layer perceptron (also called FFN) with relu. Mostly
-    used in DETR series detectors.
+    """Very simple multi-layer perceptron (also called FFN) with activation.
+    Mostly used in DETR series detectors.
 
     Args:
         input_dim (int): Feature dim of the input tensor.

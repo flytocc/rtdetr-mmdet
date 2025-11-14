@@ -7,8 +7,7 @@ num_levels = 2
 model = dict(
     data_preprocessor=dict(batch_augments=None),
     backbone=dict(return_idx=[2, 3]),
-    neck=dict(
-        in_channels=[512, 1024], out_channels=base_dim, num_outs=num_levels),
+    neck=dict(in_channels=[512, 1024], out_channels=base_dim),
     encoder=dict(
         in_channels=[base_dim, base_dim],
         fpn_cfg=dict(
@@ -32,6 +31,7 @@ model = dict(
     bbox_head=dict(embed_dims=base_dim))
 
 train_dataloader = dict(batch_size=16, num_workers=8)
+train_dataloader = dict(batch_size=8, num_workers=4)
 
 # optimizer
 optim_wrapper = dict(optimizer=dict(lr=0.0008))

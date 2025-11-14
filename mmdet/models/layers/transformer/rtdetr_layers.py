@@ -342,6 +342,8 @@ class RTDETRFPN(BaseModule):
             list[:obj:`ConfigDict`], optional): Initialization config dict.
     """
 
+    csp_block = CSPLayer
+
     def __init__(
         self,
         in_channels: List[int] = [256, 256, 256],
@@ -378,7 +380,7 @@ class RTDETRFPN(BaseModule):
                     norm_cfg=norm_cfg,
                     act_cfg=act_cfg))
             self.top_down_blocks.append(
-                CSPLayer(
+                self.csp_block(
                     in_channels[idx - 1] * 2,
                     in_channels[idx - 1],
                     num_blocks=num_csp_blocks,
@@ -402,7 +404,7 @@ class RTDETRFPN(BaseModule):
                     norm_cfg=norm_cfg,
                     act_cfg=act_cfg))
             self.bottom_up_blocks.append(
-                CSPLayer(
+                self.csp_block(
                     in_channels[idx] * 2,
                     in_channels[idx + 1],
                     num_blocks=num_csp_blocks,

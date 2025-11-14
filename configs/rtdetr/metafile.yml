@@ -16,7 +16,7 @@ Collections:
       Title: 'DETRs Beat YOLOs on Real-time Object Detection'
     README: configs/rtdetr/README.md
     Code:
-      URL: https://github.com/flytocc/mmdetection/blob/f7cf93dcc8d5574393ca1eeb67a97f30da4290c7/mmdet/models/detectors/rtdetr.py#L15
+      URL: https://github.com/flytocc/rtdetr-mmdet/blob/8da6c68c4e5d4d8aae4438c7d59fd222cba871a5/mmdet/models/detectors/rtdetr.py#L18
       Version: v3.3.0
 
 Models:

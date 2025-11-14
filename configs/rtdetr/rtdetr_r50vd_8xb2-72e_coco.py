@@ -42,8 +42,7 @@ model = dict(
         kernel_size=1,
         out_channels=256,
         act_cfg=None,
-        norm_cfg=dict(type='BN', requires_grad=True),  # GN for DINO
-        num_outs=3),  # 4 for DINO
+        norm_cfg=dict(type='BN', requires_grad=True)),  # GN for DINO
     encoder=dict(
         use_encoder_idx=[-1],
         num_encoder_layers=1,
@@ -159,7 +158,7 @@ train_dataloader = dict(
     drop_last=True,
     pin_memory=True,
     dataset=dict(pipeline=train_pipeline))
-val_dataloader = dict(dataset=dict(pipeline=test_pipeline))
+val_dataloader = dict(batch_size=2, dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
 # optimizer

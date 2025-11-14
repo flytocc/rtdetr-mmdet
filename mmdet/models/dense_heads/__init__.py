@@ -16,6 +16,7 @@ from .dab_detr_head import DABDETRHead
 from .ddod_head import DDODHead
 from .ddq_detr_head import DDQDETRHead
 from .deformable_detr_head import DeformableDETRHead
+from .deimv2_head import DEIMV2Head
 from .detr_head import DETRHead
 from .dfine_head import DFINEHead
 from .dino_head import DINOHead
@@ -71,5 +72,5 @@ __all__ = [
     'CondInstMaskHead', 'RTMDetInsHead', 'RTMDetInsSepBNHead',
     'BoxInstBboxHead', 'BoxInstMaskHead', 'ConditionalDETRHead', 'DINOHead',
     'ATSSVLFusionHead', 'DABDETRHead', 'DDQDETRHead', 'GroundingDINOHead',
-    'RTDETRHead', 'DFINEHead'
+    'RTDETRHead', 'DFINEHead', 'DEIMV2Head'
 ]

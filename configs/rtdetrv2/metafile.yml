@@ -14,7 +14,7 @@ Collections:
     Paper:
       URL: https://arxiv.org/abs/2304.08069
       Title: 'Official RT-DETR (RTDETR paddle pytorch), Real-Time DEtection TRansformer, DETRs Beat YOLOs on Real-time Object Detection'
-    README: configs/rtdetrv2/README.md
+    README: 
     Code:
       URL: https://github.com/flytocc/rtdetr-mmdet/blob/67d50fcc01d8cd356319d93494810eb9a7daa99f/mmdet/models/detectors/rtdetrv2.py#L9
       Version: v3.3.0

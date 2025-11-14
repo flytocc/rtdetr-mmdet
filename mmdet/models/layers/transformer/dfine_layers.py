@@ -3,7 +3,7 @@ import math
 import warnings
 from copy import deepcopy
 from functools import lru_cache
-from typing import List, Optional, Tuple, Union
+from typing import List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -30,6 +30,7 @@ class RepNCSPELAN4(BaseModule):
     def __init__(self,
                  in_channels: int,
                  out_channels: int,
+                 hidden_channels: Optional[int] = None,
                  expand_ratio: float = 1.0,
                  num_blocks: int = 3,
                  conv_cfg: OptConfigType = None,
@@ -37,17 +38,18 @@ class RepNCSPELAN4(BaseModule):
                  act_cfg: OptConfigType = dict(type='SiLU', inplace=True),
                  init_cfg: OptMultiConfig = None) -> None:
         super().__init__(init_cfg=init_cfg)
+        hidden_channels = hidden_channels or in_channels
         mid_channels = int(out_channels * expand_ratio // 2)
         self.cv1 = ConvModule(
             in_channels,
-            in_channels,
+            hidden_channels,
             1,
             conv_cfg=conv_cfg,
             norm_cfg=norm_cfg,
             act_cfg=act_cfg)
         self.cv2 = nn.Sequential(
             CSPLayer(
-                in_channels // 2,
+                hidden_channels // 2,
                 mid_channels,
                 expand_ratio=1.0,
                 num_blocks=num_blocks,
@@ -80,7 +82,7 @@ class RepNCSPELAN4(BaseModule):
                 norm_cfg=norm_cfg,
                 act_cfg=act_cfg))
         self.cv4 = ConvModule(
-            in_channels + mid_channels * 2,
+            hidden_channels + mid_channels * 2,
             out_channels,
             1,
             conv_cfg=conv_cfg,
@@ -119,12 +121,15 @@ class DFINEFPN(RTDETRFPN):
             list[:obj:`ConfigDict`], optional): Initialization config dict.
     """
 
+    csp_block = RepNCSPELAN4
+
     def __init__(
         self,
         in_channels: List[int] = [256, 256, 256],
         out_channels: int = 256,
         num_csp_blocks: int = 3,
         expansion: float = 1.0,
+        fuse_type: Literal['cat', 'sum'] = 'cat',
         upsample_cfg: ConfigType = dict(scale_factor=2, mode='nearest'),
         conv_cfg: OptConfigType = None,
         norm_cfg: OptConfigType = dict(type='BN', requires_grad=True),
@@ -137,9 +142,11 @@ class DFINEFPN(RTDETRFPN):
             mode='fan_in',
             nonlinearity='leaky_relu')
     ) -> None:
-        super().__init__(init_cfg=init_cfg)
+        super(RTDETRFPN, self).__init__(init_cfg=init_cfg)
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.fuse_type = fuse_type
+        inp_scale = 2 if fuse_type == 'cat' else 1
 
         # top-down fpn
         self.upsample = nn.Upsample(**upsample_cfg)
@@ -155,9 +162,10 @@ class DFINEFPN(RTDETRFPN):
                     norm_cfg=norm_cfg,
                     act_cfg=None))
             self.top_down_blocks.append(
-                RepNCSPELAN4(
-                    in_channels[idx - 1] * 2,
+                self.csp_block(
+                    in_channels[idx - 1] * inp_scale,
                     in_channels[idx - 1],
+                    hidden_channels=in_channels[idx - 1] * 2,
                     num_blocks=num_csp_blocks,
                     expand_ratio=expansion,
                     conv_cfg=conv_cfg,
@@ -188,9 +196,10 @@ class DFINEFPN(RTDETRFPN):
                         norm_cfg=norm_cfg,
                         act_cfg=None)))
             self.bottom_up_blocks.append(
-                RepNCSPELAN4(
-                    in_channels[idx] * 2,
+                self.csp_block(
+                    in_channels[idx] * inp_scale,
                     in_channels[idx + 1],
+                    hidden_channels=in_channels[idx] * 2,
                     num_blocks=num_csp_blocks,
                     expand_ratio=expansion,
                     conv_cfg=conv_cfg,
@@ -208,6 +217,50 @@ class DFINEFPN(RTDETRFPN):
                     norm_cfg=norm_cfg,
                     act_cfg=None) if in_channels[i] != out_channels else nn.
                 Identity())
+
+    def forward(self, inputs: Tuple[Tensor]) -> Tuple[Tensor]:
+        """
+        Args:
+            inputs (tuple[Tensor]): input features.
+
+        Returns:
+            tuple[Tensor]: FPN features.
+        """
+        assert len(inputs) == len(self.in_channels)
+
+        # top-down path
+        inner_outs = [inputs[-1]]
+        for idx in range(len(self.in_channels) - 1, 0, -1):
+            feat_high = inner_outs[0]
+            feat_low = inputs[idx - 1]
+            feat_high = self.reduce_layers[len(self.in_channels) - 1 - idx](
+                feat_high)
+            inner_outs[0] = feat_high
+
+            upsample_feat = self.upsample(feat_high)
+
+            fused_feat = torch.cat([upsample_feat, feat_low], 1) \
+                if self.fuse_type == 'cat' else (upsample_feat + feat_low)
+            inner_out = self.top_down_blocks[len(self.in_channels) - 1 - idx](
+                fused_feat)
+            inner_outs.insert(0, inner_out)
+
+        # bottom-up path
+        outs = [inner_outs[0]]
+        for idx in range(len(self.in_channels) - 1):
+            feat_low = outs[-1]
+            feat_high = inner_outs[idx + 1]
+            downsample_feat = self.downsamples[idx](feat_low)
+            fused_feat = torch.cat([downsample_feat, feat_high], 1) \
+                if self.fuse_type == 'cat' else (downsample_feat + feat_high)
+            out = self.bottom_up_blocks[idx](fused_feat)
+            outs.append(out)
+
+        # out convs
+        for idx, conv in enumerate(self.out_convs):
+            outs[idx] = conv(outs[idx])
+
+        return tuple(outs)
 
 
 @lru_cache
@@ -776,11 +829,16 @@ class DFINETransformerDecoderLayer(DeformableDetrTransformerDecoderLayer):
 
 class LQE(nn.Module):
 
-    def __init__(self, k: int, hidden_dim: int, num_layers: int, reg_max: int):
+    def __init__(self,
+                 k: int,
+                 hidden_dim: int,
+                 num_layers: int,
+                 reg_max: int,
+                 act_cfg: ConfigType = dict(type='ReLU', inplace=True)):
         super(LQE, self).__init__()
         self.k = k
         self.reg_max = reg_max
-        self.reg_conf = MLP(4 * (k + 1), hidden_dim, 1, num_layers)
+        self.reg_conf = MLP(4 * (k + 1), hidden_dim, 1, num_layers, act_cfg)
         self.init_weights()
 
     def init_weights(self) -> None:
@@ -845,6 +903,10 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                  layer_scale: float = 1.0,
                  eval_idx: int = -1,
                  num_layers: int = 6,
+                 ref_num_layers: int = 2,
+                 ref_hidden_dim: Optional[int] = None,
+                 ref_act_cfg: ConfigType = dict(type='ReLU', inplace=True),
+                 lqe_act_cfg: ConfigType = dict(type='ReLU', inplace=True),
                  remove_cross_attn_value_proj_and_output_proj: bool = True,
                  **kwargs) -> None:
         if eval_idx < 0:
@@ -854,6 +916,10 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
         self.reg_max = reg_max
         self.reg_scale = reg_scale
         self.layer_scale = layer_scale
+        self.ref_num_layers = ref_num_layers
+        self.ref_hidden_dim = ref_hidden_dim
+        self.ref_act_cfg = ref_act_cfg
+        self.lqe_act_cfg = lqe_act_cfg
         self.remove_cross_attn_value_proj_and_output_proj = \
             remove_cross_attn_value_proj_and_output_proj
         super().__init__(*args, num_layers=num_layers, **kwargs)
@@ -895,11 +961,18 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             raise ValueError('There is not post_norm in '
                              f'{self._get_name()}')
 
-        self.ref_point_head = MLP(4, self.embed_dims * 2, self.embed_dims, 2)
+        self.ref_point_head = MLP(
+            4,
+            self.ref_hidden_dim or self.embed_dims * 2,
+            self.embed_dims,
+            self.ref_num_layers,
+            act_cfg=self.ref_act_cfg)
 
         self.integral = Integral(self.reg_max, self.reg_scale)
-        self.lqe_layers = ModuleList(
-            [LQE(4, 64, 2, self.reg_max) for _ in range(self.num_layers)])
+        self.lqe_layers = ModuleList([
+            LQE(4, 64, 2, self.reg_max, act_cfg=self.lqe_act_cfg)
+            for _ in range(self.num_layers)
+        ])
 
     def forward(self, query: Tensor, value: Tensor, key_padding_mask: Tensor,
                 self_attn_mask: Tensor, reference_points: Tensor,
@@ -984,8 +1057,9 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                     query_pos = F.interpolate(query_pos, size=self.scaled_dim)
                 if self.scaled_dim != query.size(-1):
                     query = F.interpolate(query, size=self.scaled_dim)
-                    value = F.interpolate(value, size=self.scaled_dim)
                     query_detach = query.detach()
+                if self.scaled_dim != value.size(-1):
+                    value = F.interpolate(value, size=self.scaled_dim)
 
             query = layer(
                 query,

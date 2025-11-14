@@ -69,7 +69,7 @@ class MultiImageMixDataset:
             self.flag = self.dataset.flag
         self.num_samples = len(self.dataset)
         self.max_refetch = max_refetch
-        self.deepcopy = copy.deepcopy if deepcopy else lambda x: x
+        self.deepcopy = copy.deepcopy if deepcopy else copy.copy
 
         self._fully_initialized = False
         if not lazy_init:

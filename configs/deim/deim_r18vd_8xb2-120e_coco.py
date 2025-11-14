@@ -4,9 +4,10 @@ act_cfg = dict(type='SiLU', inplace=True)
 model = dict(
     type='DEIMRTDETR',
     decoder=dict(
-        ref_act_cfg=act_cfg,
         ref_hidden_dim=256,
         ref_num_layers=3,
+        ref_act_cfg=act_cfg,
+        # lqe_act_cfg=act_cfg,  # TODO SiLU in DEIM
         layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
     bbox_head=dict(
         reg_act_cfg=act_cfg,
@@ -119,6 +120,7 @@ data_preprocessor_stage4 = dict(
     bgr_to_rgb=True,
     pad_size_divisor=1)
 
+# for `EMADynamicMomentumHook`
 default_hooks = dict(checkpoint=dict(type='CheckpointAfterValHook'))
 
 stage2_switch_epoch = 4

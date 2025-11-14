@@ -9,6 +9,7 @@ from .deformable_detr_layers import (DeformableDetrTransformerDecoder,
                                      DeformableDetrTransformerDecoderLayer,
                                      DeformableDetrTransformerEncoder,
                                      DeformableDetrTransformerEncoderLayer)
+from .deimv2_layers import DEIMV2TransformerDecoder
 from .detr_layers import (DetrTransformerDecoder, DetrTransformerDecoderLayer,
                           DetrTransformerEncoder, DetrTransformerEncoderLayer)
 from .dfine_layers import DFINECdnQueryGenerator, DFINETransformerDecoder
@@ -42,5 +43,6 @@ __all__ = [
     'GroundingDinoTransformerDecoderLayer', 'GroundingDinoTransformerEncoder',
     'GroundingDinoTransformerDecoder', 'RTDETRHybridEncoder',
     'RTDETRTransformerDecoder', 'RTDETRTransformerDecoderV2',
-    'DFINECdnQueryGenerator', 'DFINETransformerDecoder'
+    'DFINECdnQueryGenerator', 'DFINETransformerDecoder',
+    'DEIMV2TransformerDecoder'
 ]

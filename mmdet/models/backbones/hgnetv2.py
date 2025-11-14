@@ -376,7 +376,8 @@ class HGNetV2(BaseModule):
     HGNetV2
     Args:
         stem_channels: list. Number of channels for the stem block.
-        stage_type: str. The stage configuration of HGNet. such as the number of channels, stride, etc.
+        stage_type: str. The stage configuration of HGNet.
+            Such as the number of channels, stride, etc.
         use_lab: boolean. Whether to use LearnableAffineBlock in network.
         lr_mult_list: list. Control the learning rate of different stages.
     Returns:
@@ -384,89 +385,122 @@ class HGNetV2(BaseModule):
     """
 
     arch_configs = {
+        'Atto': {  # only 3 stages
+            'stem_channels': [3, 16, 16],
+            'stage_config': {
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
+                'stage1': [16, 16, 64, 1, False, False, 3, 3],
+                'stage2': [64, 32, 256, 1, True, False, 3, 3],
+                'stage3': [256, 64, 256, 1, True, True, 3, 3],
+            },
+            'url':
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B0_stage1.pth'  # noqa
+        },
+        'Femto': {  # only 3 stages
+            'stem_channels': [3, 16, 16],
+            'stage_config': {
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
+                'stage1': [16, 16, 64, 1, False, False, 3, 3],
+                'stage2': [64, 32, 256, 1, True, False, 3, 3],
+                'stage3': [256, 64, 512, 1, True, True, 5, 3],
+            },
+            'url':
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B0_stage1.pth'  # noqa
+        },
+        'Pico': {  # only 3 stages
+            'stem_channels': [3, 16, 16],
+            'stage_config': {
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
+                'stage1': [16, 16, 64, 1, False, False, 3, 3],
+                'stage2': [64, 32, 256, 1, True, False, 3, 3],
+                'stage3': [256, 64, 512, 2, True, True, 5, 3],
+            },
+            'url':
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B0_stage1.pth'  # noqa
+        },
         'B0': {
             'stem_channels': [3, 16, 16],
             'stage_config': {
-                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
                 'stage1': [16, 16, 64, 1, False, False, 3, 3],
                 'stage2': [64, 32, 256, 1, True, False, 3, 3],
                 'stage3': [256, 64, 512, 2, True, True, 5, 3],
                 'stage4': [512, 128, 1024, 1, True, True, 5, 3],
             },
             'url':
-            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B0_stage1.pth'
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B0_stage1.pth'  # noqa
         },
         'B1': {  # S
             'stem_channels': [3, 24, 32],
             'stage_config': {
-                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
                 'stage1': [32, 32, 64, 1, False, False, 3, 3],
                 'stage2': [64, 48, 256, 1, True, False, 3, 3],
                 'stage3': [256, 96, 512, 2, True, True, 5, 3],
                 'stage4': [512, 192, 1024, 1, True, True, 5, 3],
             },
             'url':
-            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B1_stage1.pth'
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B1_stage1.pth'  # noqa
         },
         'B2': {  # M
             'stem_channels': [3, 24, 32],
             'stage_config': {
-                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
                 'stage1': [32, 32, 96, 1, False, False, 3, 4],
                 'stage2': [96, 64, 384, 1, True, False, 3, 4],
                 'stage3': [384, 128, 768, 3, True, True, 5, 4],
                 'stage4': [768, 256, 1536, 1, True, True, 5, 4],
             },
             'url':
-            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B2_stage1.pth'
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B2_stage1.pth'  # noqa
         },
         'B3': {
             'stem_channels': [3, 24, 32],
             'stage_config': {
-                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
                 'stage1': [32, 32, 128, 1, False, False, 3, 5],
                 'stage2': [128, 64, 512, 1, True, False, 3, 5],
                 'stage3': [512, 128, 1024, 3, True, True, 5, 5],
                 'stage4': [1024, 256, 2048, 1, True, True, 5, 5],
             },
             'url':
-            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B3_stage1.pth'
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B3_stage1.pth'  # noqa
         },
         'B4': {  # L
             'stem_channels': [3, 32, 48],
             'stage_config': {
-                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
                 'stage1': [48, 48, 128, 1, False, False, 3, 6],
                 'stage2': [128, 96, 512, 1, True, False, 3, 6],
                 'stage3': [512, 192, 1024, 3, True, True, 5, 6],
                 'stage4': [1024, 384, 2048, 1, True, True, 5, 6],
             },
             'url':
-            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B4_stage1.pth'
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B4_stage1.pth'  # noqa
         },
         'B5': {  # X
             'stem_channels': [3, 32, 64],
             'stage_config': {
-                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
                 'stage1': [64, 64, 128, 1, False, False, 3, 6],
                 'stage2': [128, 128, 512, 2, True, False, 3, 6],
                 'stage3': [512, 256, 1024, 5, True, True, 5, 6],
                 'stage4': [1024, 512, 2048, 2, True, True, 5, 6],
             },
             'url':
-            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B5_stage1.pth'
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B5_stage1.pth'  # noqa
         },
         'B6': {  # H
             'stem_channels': [3, 48, 96],
             'stage_config': {
-                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num
+                # in_channels, mid_channels, out_channels, num_blocks, downsample, light_block, kernel_size, layer_num  # noqa
                 'stage1': [96, 96, 192, 2, False, False, 3, 6],
                 'stage2': [192, 192, 512, 3, True, False, 3, 6],
                 'stage3': [512, 384, 1024, 6, True, True, 5, 6],
                 'stage4': [1024, 768, 2048, 3, True, True, 5, 6],
             },
             'url':
-            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B6_stage1.pth'
+            'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B6_stage1.pth'  # noqa
         },
     }
 
@@ -493,7 +527,7 @@ class HGNetV2(BaseModule):
 
         stem_channels = self.arch_configs[name]['stem_channels']
         stage_config = self.arch_configs[name]['stage_config']
-        download_url = self.arch_configs[name]['url']
+        # download_url = self.arch_configs[name]['url']
 
         self._out_strides = [4, 8, 16, 32]
         self._out_channels = [stage_config[k][2] for k in stage_config]
@@ -508,8 +542,8 @@ class HGNetV2(BaseModule):
         # stages
         self.stages = nn.ModuleList()
         for i, k in enumerate(stage_config):
-            in_channels, mid_channels, out_channels, block_num, downsample, light_block, kernel_size, layer_num = stage_config[
-                k]
+            (in_channels, mid_channels, out_channels, block_num, downsample,
+             light_block, kernel_size, layer_num) = stage_config[k]
             self.stages.append(
                 HG_Stage(in_channels, mid_channels, out_channels, block_num,
                          layer_num, downsample, light_block, kernel_size,
