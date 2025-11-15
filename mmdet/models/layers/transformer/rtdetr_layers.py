@@ -663,6 +663,7 @@ class RTDETRTransformerDecoder(DinoTransformerDecoder):
             eval_idx = eval_idx + self.num_layers
             assert eval_idx >= 0
 
+        hidden_states = []
         all_layers_outputs_classes = []
         all_layers_outputs_coords = []
         for lid, layer in enumerate(self.layers):
@@ -684,6 +685,7 @@ class RTDETRTransformerDecoder(DinoTransformerDecoder):
             tmp = reg_branches[lid](query)
 
             if self.training or lid == eval_idx:
+                hidden_states.append((lid, query))
                 all_layers_outputs_classes.append(cls_branches[lid](query))
                 all_layers_outputs_coords.append(
                     (tmp + unact_reference_points).sigmoid())
@@ -694,4 +696,5 @@ class RTDETRTransformerDecoder(DinoTransformerDecoder):
             unact_reference_points = tmp + unact_reference_points.detach()
             reference_points = unact_reference_points.sigmoid().detach()
 
-        return all_layers_outputs_classes, all_layers_outputs_coords
+        return hidden_states, (all_layers_outputs_classes,
+                               all_layers_outputs_coords)

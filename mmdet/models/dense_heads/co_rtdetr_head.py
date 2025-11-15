@@ -11,7 +11,6 @@ from mmdet.structures.bbox import (bbox_cxcywh_to_xyxy, bbox_overlaps,
                                    bbox_xyxy_to_cxcywh)
 from mmdet.utils import OptInstanceList, reduce_mean
 from ..losses import RTDETRVarifocalLoss
-from .dfine_head import DFINEHead
 from .rtdetr_head import RTDETRHead
 
 
@@ -218,8 +217,3 @@ class CoRTDETRHeadMixin:
 @MODELS.register_module()
 class CoRTDETRHead(CoRTDETRHeadMixin, RTDETRHead):
     """A CoRTDETRHeadMixin vision of RTDETRHead"""
-
-
-@MODELS.register_module()
-class CoDFINEHead(CoRTDETRHeadMixin, DFINEHead):
-    """A CoRTDETRHeadMixin vision of DFINEHead"""

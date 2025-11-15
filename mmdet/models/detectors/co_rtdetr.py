@@ -12,8 +12,6 @@ from mmdet.structures import OptSampleList, SampleList
 from mmdet.utils import ConfigType, OptConfigType
 from mmengine.structures import InstanceData
 
-from .deim import DEIMDFINE, DEIMRTDETR
-from .dfine import DFINE
 from .rtdetr import RTDETR
 
 
@@ -326,18 +324,3 @@ def upd_loss(losses, idx, weight=1):
 @MODELS.register_module()
 class CoRTDETR(CoRTDETRMixin, RTDETR):
     """A CoRTDETRMixin version of RTDETR."""
-
-
-@MODELS.register_module()
-class CoDFINE(CoRTDETRMixin, DFINE):
-    """A CoRTDETRMixin version of DFINE."""
-
-
-@MODELS.register_module()
-class CoDEIMDFINE(CoRTDETRMixin, DEIMDFINE):
-    """A CoRTDETRMixin version of DEIMDFINE."""
-
-
-@MODELS.register_module()
-class CoDEIMRTDETR(CoRTDETRMixin, DEIMRTDETR):
-    """A CoRTDETRMixin version of DEIMRTDETR."""

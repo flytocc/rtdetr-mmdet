@@ -24,11 +24,34 @@ class RTDETRHead(DINOHead):
     <https://arxiv.org/abs/2304.08069>`_ .
     """
 
-    def forward(self, hidden_states: List[Tensor],
-                references: List[Tensor]) -> Tuple[Tensor, Tensor]:
-        all_layers_outputs_classes = hidden_states
-        all_layers_outputs_coords = references
-        return all_layers_outputs_classes, all_layers_outputs_coords
+    def forward(self, hidden_states: List[Tuple[int, Tensor]],
+                references: Tuple[List[Tensor], List[Tensor]]) -> Tuple[List[Tensor], List[Tensor]]:
+        """Forward function.
+
+        Args:
+            hidden_states (list[tuple[int, Tensor]): Hidden states output from
+                each decoder layer. Each tensor has shape
+                (bs, num_queries, dim).
+            references (list[list[Tensor], list[Tensor]]): List of the tuple of
+                score and reference from the decoder. Each `reference` has
+                shape (bs, num_queries, 4). The coordinates are arranged as
+                (cx, cy, w, h). Each `score` has shape
+                (bs, num_queries, num_classes).
+            mask_features (Tensor): instance mask features that has shape
+                (bs, dim, h, w).
+
+        Returns:
+            tuple[Tensor]: results of head containing the following tensor.
+
+            - all_layers_outputs_classes (Tensor): Outputs from the
+              classification head, has shape (num_decoder_layers, bs,
+              num_queries, cls_out_channels).
+            - all_layers_outputs_coords (Tensor): Sigmoid outputs from the
+              regression head with normalized coordinate format (cx, cy, w,
+              h), has shape (num_decoder_layers, bs, num_queries, 4) with the
+              last dimension arranged as (cx, cy, w, h).
+        """
+        return tuple(references)
 
     @staticmethod
     def split_outputs(all_layers_cls_scores: List[Tensor],

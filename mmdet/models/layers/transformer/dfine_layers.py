@@ -1040,6 +1040,7 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             assert eval_idx >= 0
         assert eval_idx == self.eval_idx
 
+        hidden_states = []
         all_layers_outputs_classes = []
         all_layers_outputs_coords = []
         all_layers_outputs_corners = []
@@ -1100,6 +1101,7 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                 clamp_wh=True)
 
             if self.training or lid == eval_idx:
+                hidden_states.append(query)
                 scores = cls_branches[lid](query)
                 if self.with_lqe:
                     # Lqe does not affect the performance here.
@@ -1116,10 +1118,12 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             reference_points = new_reference_points.detach()
 
         if self.training:
-            all_layers_outputs_coords = (all_layers_outputs_coords,
-                                         all_layers_outputs_corners)
+            return hidden_states, (all_layers_outputs_classes,
+                                   all_layers_outputs_coords,
+                                   all_layers_outputs_corners)
 
-        return all_layers_outputs_classes, all_layers_outputs_coords
+        return hidden_states, (all_layers_outputs_classes,
+                               all_layers_outputs_coords)
 
 
 class DFINECdnQueryGenerator(CdnQueryGenerator):

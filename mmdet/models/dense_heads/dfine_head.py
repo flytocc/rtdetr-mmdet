@@ -232,6 +232,7 @@ class DFINEHead(RTDETRHead):
         self,
         all_layers_cls_scores: Tensor,
         all_layers_bbox_preds: Tensor,
+        all_layers_bbox_corners: Tensor,
         enc_cls_scores: Tensor,
         enc_bbox_preds: Tensor,
         batch_gt_instances: InstanceList,
@@ -273,8 +274,6 @@ class DFINEHead(RTDETRHead):
         Returns:
             dict[str, Tensor]: A dictionary of loss components.
         """
-        all_layers_bbox_preds, all_layers_bbox_corners = all_layers_bbox_preds
-
         # extract denoising and matching part of outputs
         (all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
          all_layers_matching_bbox_corners, all_layers_denoising_cls_scores,
