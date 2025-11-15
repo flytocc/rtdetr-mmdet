@@ -498,6 +498,7 @@ class RTDETRHybridEncoder(BaseModule):
                  pe_temperature: float = 10000.0,
                  spatial_shapes: Optional[Tuple[Tuple[int, int]]] = None,
                  encode_before_fpn: bool = True,
+                 with_cp: bool = False,
                  fpn_cfg: OptConfigType = None,
                  init_cfg: OptMultiConfig = None) -> None:
         super().__init__(init_cfg=init_cfg)
@@ -506,14 +507,22 @@ class RTDETRHybridEncoder(BaseModule):
         self.pe_temperature = pe_temperature
         self.encode_before_fpn = encode_before_fpn
 
+        if isinstance(num_encoder_layers, int):
+            num_encoder_layers = (num_encoder_layers, ) * len(
+                self.use_encoder_idx)
+        else:
+            assert isinstance(num_encoder_layers, (tuple, list))
+            assert len(num_encoder_layers) == len(self.use_encoder_idx)
+
         # fpn layer
         self.fpn = MODELS.build(fpn_cfg) \
             if fpn_cfg is not None else nn.Identity()
 
         # encoder transformer
         self.transformer_blocks = nn.ModuleList([
-            DetrTransformerEncoder(num_encoder_layers, layer_cfg)
-            for _ in range(len(use_encoder_idx))
+            DetrTransformerEncoder(num_layers, layer_cfg,
+                                   num_layers if with_cp else -1)
+            for num_layers in num_encoder_layers
         ])
 
         if spatial_shapes is not None:
@@ -582,8 +591,8 @@ class RTDETRHybridEncoder(BaseModule):
                     device=src_flatten.device)
             memory = self.transformer_blocks[i](
                 src_flatten, query_pos=pos_embed, key_padding_mask=None)
-            outs[enc_ind] = memory.permute(0, 2, 1).contiguous().reshape(
-                b, c, h, w)
+            outs[enc_ind] = memory.permute(0, 2,
+                                           1).contiguous().reshape(b, c, h, w)
 
         return tuple(outs)
 

@@ -1,12 +1,12 @@
 _base_ = [
-    '../_base_/datasets/coco_detection.py', '../_base_/default_runtime.py'
+    '../_base_/datasets/coco_instance.py', '../_base_/default_runtime.py'
 ]
 pretrained = 'https://github.com/flytocc/mmdetection/releases/download/model_zoo/resnet50vd_ssld_v2_pretrained_edfe4074.pth'  # noqa
 
 base_size_repeat = 3
 
 model = dict(
-    type='RTDETR',
+    type='RTDETRIns',
     num_queries=300,  # num_matching_queries, 900 for DINO
     # spatial_shapes=((80, 80), (40, 40), (
     #     20, 20)),  # for strdies (8, 16, 32) with image_size 640x640. # noqa
@@ -75,7 +75,7 @@ model = dict(
                 ffn_drop=0.0)),
         post_norm_cfg=None),
     bbox_head=dict(
-        type='RTDETRHead',
+        type='RTDETRInsHead',
         num_classes=80,
         sync_cls_avg_factor=True,
         loss_cls=dict(
@@ -86,7 +86,28 @@ model = dict(
             iou_weighted=True,
             loss_weight=1.0),
         loss_bbox=dict(type='L1Loss', loss_weight=5.0),
-        loss_iou=dict(type='GIoULoss', loss_weight=2.0)),
+        loss_iou=dict(type='GIoULoss', loss_weight=2.0),
+        loss_mask=dict(
+            type='CrossEntropyLoss',
+            use_sigmoid=True,
+            reduction='mean',
+            loss_weight=5.0),
+        loss_dice=dict(
+            type='DiceLoss',
+            use_sigmoid=True,
+            activate=True,
+            reduction='mean',
+            naive_dice=True,
+            eps=1.0,
+            loss_weight=5.0)),
+    mask_feat_cfg=dict(
+        in_channels=256,
+        feat_channels=256,
+        stacked_convs=4,
+        num_levels=3,
+        num_prototypes=256,
+        act_cfg=dict(type='ReLU', inplace=True),
+        norm_cfg=dict(type='BN', requires_grad=True)),
     dn_cfg=dict(  # TODO: Move to model.train_cfg ?
         label_noise_scale=0.5,
         box_noise_scale=1.0,
@@ -99,16 +120,23 @@ model = dict(
             match_costs=[
                 dict(type='FocalLossCost', weight=2.0),
                 dict(type='BBoxL1Cost', weight=5.0, box_format='xywh'),
-                dict(type='IoUCost', iou_mode='giou', weight=2.0)
+                dict(type='IoUCost', iou_mode='giou', weight=2.0),
+                dict(
+                    type='CrossEntropyLossCost', weight=5.0, use_sigmoid=True),
+                dict(type='DiceCost', weight=5.0, pred_act=True, eps=1.0)
             ])),
-    test_cfg=dict(max_per_img=300))
+    test_cfg=dict(max_per_img=300, mask_thr_binary=0.5))
 
 # train_pipeline, NOTE the img_scale and the Pad's size_divisor is different
 # from the default setting in mmdet.
 interpolations = ['nearest', 'bilinear', 'bicubic', 'area', 'lanczos']
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
-    dict(type='LoadAnnotations', with_bbox=True),
+    dict(
+        type='LoadAnnotations',
+        with_bbox=True,
+        with_mask=True,
+        poly2mask=False),
     dict(
         type='RandomApply',
         transforms=dict(
@@ -146,7 +174,11 @@ test_pipeline = [
         scale=(640, 640),
         keep_ratio=False,
         interpolation='bicubic'),
-    dict(type='LoadAnnotations', with_bbox=True),
+    dict(
+        type='LoadAnnotations',
+        with_bbox=True,
+        with_mask=True,
+        poly2mask=False),
     dict(
         type='PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',

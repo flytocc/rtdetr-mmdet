@@ -241,6 +241,8 @@ class LoadAnnotations(MMCV_LoadAnnotations):
         with_seg (bool): Whether to parse and load the semantic segmentation
             annotation. Defaults to False.
         poly2mask (bool): Whether to convert mask to bitmap. Default: True.
+        mask2bbox (bool): Whether to use mask annotation to get bbox.
+            Defaults to False.
         box_type (str): The box type used to wrap the bboxes. If ``box_type``
             is None, gt_bboxes will keep being np.ndarray. Defaults to 'hbox'.
         reduce_zero_label (bool): Whether reduce all label value
@@ -260,6 +262,7 @@ class LoadAnnotations(MMCV_LoadAnnotations):
             self,
             with_mask: bool = False,
             poly2mask: bool = True,
+            mask2bbox: bool = False,
             box_type: str = 'hbox',
             # use for semseg
             reduce_zero_label: bool = False,
@@ -271,6 +274,11 @@ class LoadAnnotations(MMCV_LoadAnnotations):
         self.box_type = box_type
         self.reduce_zero_label = reduce_zero_label
         self.ignore_index = ignore_index
+
+        if mask2bbox:
+            assert self.with_mask, 'Using mask2bbox requires ' \
+                                   'with_mask is True.'
+        self.mask2bbox = mask2bbox
 
     def _load_bboxes(self, results: dict) -> None:
         """Private function to load bounding box annotations.
@@ -354,18 +362,18 @@ class LoadAnnotations(MMCV_LoadAnnotations):
             # ignore the whole instance.
             if isinstance(gt_mask, list):
                 gt_mask = [
-                    np.array(polygon) for polygon in gt_mask
+                    np.array(polygon, dtype=np.float64) for polygon in gt_mask
                     if len(polygon) % 2 == 0 and len(polygon) >= 6
                 ]
                 if len(gt_mask) == 0:
                     # ignore this instance and set gt_mask to a fake mask
                     instance['ignore_flag'] = 1
-                    gt_mask = [np.zeros(6)]
+                    gt_mask = [np.zeros(6, dtype=np.float64)]
             elif not self.poly2mask:
                 # `PolygonMasks` requires a ploygon of format List[np.array],
                 # other formats are invalid.
                 instance['ignore_flag'] = 1
-                gt_mask = [np.zeros(6)]
+                gt_mask = [np.zeros(6, dtype=np.float64)]
             elif isinstance(gt_mask, dict) and \
                     not (gt_mask.get('counts') is not None and
                          gt_mask.get('size') is not None and
@@ -373,7 +381,7 @@ class LoadAnnotations(MMCV_LoadAnnotations):
                 # if gt_mask is a dict, it should include `counts` and `size`,
                 # so that `BitmapMasks` can uncompressed RLE
                 instance['ignore_flag'] = 1
-                gt_mask = [np.zeros(6)]
+                gt_mask = [np.zeros(6, dtype=np.float64)]
             gt_masks.append(gt_mask)
             # re-process gt_ignore_flags
             gt_ignore_flags.append(instance['ignore_flag'])
@@ -451,6 +459,9 @@ class LoadAnnotations(MMCV_LoadAnnotations):
             self._load_masks(results)
         if self.with_seg:
             self._load_seg_map(results)
+        if self.mask2bbox:
+            gt_bboxes = results['gt_masks'].get_bboxes(dst_type='hbox')
+            results['gt_bboxes'] = gt_bboxes
         return results
 
     def __repr__(self) -> str:
