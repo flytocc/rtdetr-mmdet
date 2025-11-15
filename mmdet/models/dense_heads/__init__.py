@@ -43,6 +43,7 @@ from .retina_head import RetinaHead
 from .retina_sepbn_head import RetinaSepBNHead
 from .rpn_head import RPNHead
 from .rtdetr_head import RTDETRHead
+from .rtdetr_ins_dyconv_head import RTDETRInsDyConvHead
 from .rtdetr_ins_head import RTDETRInsHead
 from .rtmdet_head import RTMDetHead, RTMDetSepBNHead
 from .rtmdet_ins_head import RTMDetInsHead, RTMDetInsSepBNHead
@@ -73,5 +74,6 @@ __all__ = [
     'CondInstMaskHead', 'RTMDetInsHead', 'RTMDetInsSepBNHead',
     'BoxInstBboxHead', 'BoxInstMaskHead', 'ConditionalDETRHead', 'DINOHead',
     'ATSSVLFusionHead', 'DABDETRHead', 'DDQDETRHead', 'GroundingDINOHead',
-    'RTDETRHead', 'DFINEHead', 'DEIMV2Head', 'RTDETRInsHead'
+    'RTDETRHead', 'DFINEHead', 'DEIMV2Head', 'RTDETRInsHead',
+    'RTDETRInsDyConvHead'
 ]

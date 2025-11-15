@@ -88,17 +88,19 @@ class RTDETRInsHead(RTDETRHead):
                 copy.deepcopy(mask_branch) for _ in range(self.num_pred_layer)
             ])
 
+    def feat_to_mask(self, mask_preds: Tensor, mask_feats: Tensor) -> Tensor:
+        b, _, h, w = mask_feats.shape
+        return (mask_preds @ mask_feats.flatten(-2)).view(b, -1, h, w)
+
     def forward(self, hidden_states: Tensor, references: List[Tensor],
                 mask_features: Tensor) -> Tuple[Tensor, Tensor]:
         outs = super().forward(hidden_states, references)
 
         all_layers_outputs_masks = []
 
-        b, _, h, w = mask_features.shape
         for layer_id, hidden_state in hidden_states:
             tmp_mask_preds = self.mask_branches[layer_id](hidden_state)
-            outputs_mask = tmp_mask_preds @ mask_features.flatten(-2)
-            outputs_mask = outputs_mask.view(b, -1, h, w)
+            outputs_mask = self.feat_to_mask(tmp_mask_preds, mask_features)
             all_layers_outputs_masks.append(outputs_mask)
 
         return (*outs, all_layers_outputs_masks)

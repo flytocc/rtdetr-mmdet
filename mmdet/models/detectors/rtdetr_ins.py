@@ -149,11 +149,11 @@ class RTDETRIns(RTDETR):
         enc_outputs_mask = self.bbox_head.mask_branches[
             self.decoder.num_layers](query)  # shuold norm?
 
-        h, w = mask_features.shape[-2:]
-        topk_mask = enc_outputs_mask @ mask_features.flatten(-2)
-        topk_mask = topk_mask.view(bs, -1, h, w)
+        topk_mask = self.bbox_head.feat_to_mask(enc_outputs_mask,
+                                                mask_features)
 
         # unified reference points
+        h, w = topk_mask.shape[-2:]
         factor = topk_mask.new_tensor([w, h, w, h]).unsqueeze(0)
         masks = topk_mask.detach().reshape(-1, h, w) > 0
         topk_coords_xyxy = mask2bbox_np(masks).reshape(bs, -1, 4)
