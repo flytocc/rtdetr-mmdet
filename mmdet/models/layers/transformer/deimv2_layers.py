@@ -457,7 +457,11 @@ class DEIMV2TransformerDecoder(DFINETransformerDecoder):
     """Transformer decoder of DEIM v2."""
 
     def _init_layers(self) -> None:
-        """Initialize decoder layers."""
+        """Initialize decoder layers.
+
+        NOTE only changes:
+            DFINETransformerDecoderLayer -> DEIMV2TransformerDecoderLayer
+        """
         num_wide_layers = self.num_layers - self.eval_idx - 1
         self.layers = ModuleList([
             DEIMV2TransformerDecoderLayer(**self.layer_cfg)
@@ -501,152 +505,8 @@ class DEIMV2TransformerDecoder(DFINETransformerDecoder):
             act_cfg=self.ref_act_cfg)
 
         self.integral = Integral(self.reg_max, self.reg_scale)
-        self.lqe_layers = ModuleList([
-            LQE(4, 64, 2, self.reg_max, act_cfg=self.lqe_act_cfg)
-            for _ in range(self.num_layers)
-        ])
-
-    def forward(self, query: Tensor, value: Tensor, key_padding_mask: Tensor,
-                self_attn_mask: Tensor, reference_points: Tensor,
-                spatial_shapes: Tensor, level_start_index: Tensor,
-                valid_ratios: Tensor, reg_branches: nn.ModuleList,
-                cls_branches: nn.ModuleList, **kwargs) -> Tuple[Tensor]:
-        """Forward function of Transformer decoder.
-
-        Args:
-            query (Tensor): The input query, has shape (num_queries, bs, dim).
-            value (Tensor): The input values, has shape (num_value, bs, dim).
-            key_padding_mask (Tensor): The `key_padding_mask` of `self_attn`
-                input. ByteTensor, has shape (num_queries, bs).
-            self_attn_mask (Tensor): The attention mask to prevent information
-                leakage from different denoising groups and matching parts, has
-                shape (num_queries_total, num_queries_total). It is `None` when
-                `self.training` is `False`.
-            reference_points (Tensor): The initial reference, has shape
-                (bs, num_queries, 4) with the last dimension arranged as
-                (cx, cy, w, h).
-            spatial_shapes (Tensor): Spatial shapes of features in all levels,
-                has shape (num_levels, 2), last dimension represents (h, w).
-            level_start_index (Tensor): The start index of each level.
-                A tensor has shape (num_levels, ) and can be represented
-                as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
-            valid_ratios (Tensor): The ratios of the valid width and the valid
-                height relative to the width and the height of features in all
-                levels, has shape (bs, num_levels, 2).
-            reg_branches: (obj:`nn.ModuleList`): Used for refining the
-                regression results.
-            cls_branches: (obj:`nn.ModuleList`): Used for classification
-                results.
-
-        Returns:
-            tuple[Tensor]: Output queries and references of Transformer
-                decoder
-
-            - query (Tensor): Output embeddings of the last decoder, has
-              shape (num_queries, bs, embed_dims) when `return_intermediate`
-              is `False`. Otherwise, Intermediate output embeddings of all
-              decoder layers, has shape (num_decoder_layers, num_queries, bs,
-              embed_dims).
-            - reference_points (Tensor): The reference of the last decoder
-              layer, has shape (bs, num_queries, 4)  when `return_intermediate`
-              is `False`. Otherwise, Intermediate references of all decoder
-              layers, has shape (num_decoder_layers, bs, num_queries, 4). The
-              coordinates are arranged as (cx, cy, w, h)
-        """
-        assert self.return_intermediate
-        assert reg_branches is not None
-        assert reference_points.shape[-1] == 4
-        # To avoid inverse_sigmoid, remove .sigmoid() in pre_decoder
-        # So reference_points is unactivated reference_points
-        unact_reference_points = reference_points
-        reference_points = unact_reference_points.sigmoid()
-
-        eval_idx = kwargs.pop('eval_idx', -1)
-        if eval_idx < 0:
-            eval_idx = eval_idx + self.num_layers
-            assert eval_idx >= 0
-        assert eval_idx == self.eval_idx
-
-        all_layers_outputs_classes = []
-        all_layers_outputs_coords = []
-        all_layers_outputs_corners = []
-
-        query_detach = 0
-        pred_corners_undetach = 0
-
-        assert len(cls_branches) == self.num_layers + 1
-        assert len(reg_branches) == self.num_layers + 2
-        pre_bbox_head = reg_branches[-1]
-
-        # diff here
-        query_pos = self.ref_point_head(reference_points)
-        query_pos = query_pos.clamp(min=-10, max=10)
-
-        for lid, layer in enumerate(self.layers):
-            reference_points_input = reference_points[:, :, None]
-            # diff here
-            # query_pos = self.ref_point_head(reference_points)
-            # query_pos = query_pos.clamp(min=-10, max=10)
-
-            # Adjust scale if needed for detachable wider layers
-            if lid > self.eval_idx and self.scaled_dim != self.embed_dims:
-                if self.scaled_dim != query_pos.size(-1):
-                    query_pos = F.interpolate(query_pos, size=self.scaled_dim)
-                if self.scaled_dim != query.size(-1):
-                    query = F.interpolate(query, size=self.scaled_dim)
-                    query_detach = query.detach()
-                if self.scaled_dim != value.size(-1):
-                    value = F.interpolate(value, size=self.scaled_dim)
-
-            query = layer(
-                query,
-                query_pos=query_pos,
-                value=value,
-                key_padding_mask=key_padding_mask,
-                self_attn_mask=self_attn_mask,
-                spatial_shapes=spatial_shapes,
-                level_start_index=level_start_index,
-                valid_ratios=valid_ratios,
-                reference_points=reference_points_input,
-                **kwargs)
-
-            if lid == 0:
-                reference_points_initial = \
-                    (pre_bbox_head(query) + unact_reference_points).sigmoid()
-                reference_points_initial_detach = \
-                    reference_points_initial.detach()
-
-                if self.training:
-                    all_layers_outputs_classes.append(cls_branches[0](query))
-                    all_layers_outputs_coords.append(reference_points_initial)
-
-            # Refine bounding box corners using FDR,
-            # integrating previous layer's corrections
-            pred_corners = reg_branches[lid](
-                query + query_detach) + pred_corners_undetach
-            new_reference_points = distance2bbox(
-                reference_points_initial_detach,
-                self.integral(pred_corners),
-                self.reg_scale,
-                clamp_wh=True)
-
-            if self.training or lid == eval_idx:
-                # Lqe does not affect the performance here.
-                scores = self.lqe_layers[lid](cls_branches[lid](query),
-                                              pred_corners)
-                all_layers_outputs_classes.append(scores)
-                all_layers_outputs_coords.append(new_reference_points)
-                all_layers_outputs_corners.append(pred_corners)
-
-                if not self.training or lid == self.num_layers - 1:
-                    break
-
-            query_detach = query.detach()
-            pred_corners_undetach = pred_corners
-            reference_points = new_reference_points.detach()
-
-        if self.training:
-            all_layers_outputs_coords = (all_layers_outputs_coords,
-                                         all_layers_outputs_corners)
-
-        return all_layers_outputs_classes, all_layers_outputs_coords
+        if self.with_lqe:
+            self.lqe_layers = ModuleList([
+                LQE(4, 64, 2, self.reg_max, act_cfg=self.lqe_act_cfg)
+                for _ in range(self.num_layers)
+            ])

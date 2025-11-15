@@ -908,6 +908,8 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                  ref_act_cfg: ConfigType = dict(type='ReLU', inplace=True),
                  lqe_act_cfg: ConfigType = dict(type='ReLU', inplace=True),
                  remove_cross_attn_value_proj_and_output_proj: bool = True,
+                 update_query_pos: bool = True,
+                 with_lqe: bool = False,
                  **kwargs) -> None:
         if eval_idx < 0:
             eval_idx = num_layers + eval_idx
@@ -920,6 +922,8 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
         self.ref_hidden_dim = ref_hidden_dim
         self.ref_act_cfg = ref_act_cfg
         self.lqe_act_cfg = lqe_act_cfg
+        self.update_query_pos = update_query_pos
+        self.with_lqe = with_lqe
         self.remove_cross_attn_value_proj_and_output_proj = \
             remove_cross_attn_value_proj_and_output_proj
         super().__init__(*args, num_layers=num_layers, **kwargs)
@@ -969,10 +973,11 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             act_cfg=self.ref_act_cfg)
 
         self.integral = Integral(self.reg_max, self.reg_scale)
-        self.lqe_layers = ModuleList([
-            LQE(4, 64, 2, self.reg_max, act_cfg=self.lqe_act_cfg)
-            for _ in range(self.num_layers)
-        ])
+        if self.with_lqe:
+            self.lqe_layers = ModuleList([
+                LQE(4, 64, 2, self.reg_max, act_cfg=self.lqe_act_cfg)
+                for _ in range(self.num_layers)
+            ])
 
     def forward(self, query: Tensor, value: Tensor, key_padding_mask: Tensor,
                 self_attn_mask: Tensor, reference_points: Tensor,
@@ -1048,8 +1053,9 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
 
         for lid, layer in enumerate(self.layers):
             reference_points_input = reference_points[:, :, None]
-            query_pos = self.ref_point_head(reference_points)
-            query_pos = query_pos.clamp(min=-10, max=10)
+            if lid == 0 or self.update_query_pos:
+                query_pos = self.ref_point_head(reference_points)
+                query_pos = query_pos.clamp(min=-10, max=10)
 
             # Adjust scale if needed for detachable wider layers
             if lid > self.eval_idx and self.scaled_dim != self.embed_dims:
@@ -1094,9 +1100,10 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                 clamp_wh=True)
 
             if self.training or lid == eval_idx:
-                # Lqe does not affect the performance here.
-                scores = self.lqe_layers[lid](cls_branches[lid](query),
-                                              pred_corners)
+                scores = cls_branches[lid](query)
+                if self.with_lqe:
+                    # Lqe does not affect the performance here.
+                    scores = self.lqe_layers[lid](scores, pred_corners)
                 all_layers_outputs_classes.append(scores)
                 all_layers_outputs_coords.append(new_reference_points)
                 all_layers_outputs_corners.append(pred_corners)

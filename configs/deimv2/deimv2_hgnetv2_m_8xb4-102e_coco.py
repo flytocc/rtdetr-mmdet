@@ -8,6 +8,7 @@ model = dict(
     decoder=dict(
         ref_hidden_dim=_base_.base_dim,
         ref_num_layers=3,
+        update_query_pos=False,
         layer_cfg=dict(
             ffn_cfg=dict(
                 _delete_=True,
