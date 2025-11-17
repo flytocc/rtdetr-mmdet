@@ -3968,3 +3968,11 @@ class CachedMixUp(BaseTransform):
         repr_str += f'random_pop={self.random_pop}, '
         repr_str += f'prob={self.prob})'
         return repr_str
+
+
+@TRANSFORMS.register_module()
+class PolyToMask(BaseTransform):
+
+    def transform(self, results: dict) -> dict:
+        results['gt_masks'] = results['gt_masks'].to_bitmap()
+        return results

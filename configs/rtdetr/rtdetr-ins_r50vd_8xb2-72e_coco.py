@@ -164,6 +164,7 @@ train_pipeline = [
         ] for interpolation in interpolations]),
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
     dict(type='RandomFlip', prob=0.5),
+    dict(type='PolyToMask'),
     dict(type='PackDetInputs')
 ]
 
