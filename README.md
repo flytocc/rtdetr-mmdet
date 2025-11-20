@@ -2,7 +2,7 @@
 
 DEIM v2                         | ours | official | gap    | checked | log
 :-------------------------------|:-----|:---------|:-------|:--------|:----
-deimv2_dinov3_m_8xb4-102e_coco  | 53.1 | 53.0     | `+0.0` | ✅      | [download](https://github.com/flytocc/rtdetr-mmdet/releases/download/logs/deimv2_dinov3_m_8xb4-102e_coco.log)
+deimv2_dinov3_m_8xb4-102e_coco  | 53.1 | 53.0     | `+0.1` | ✅      | [download](https://github.com/flytocc/rtdetr-mmdet/releases/download/logs/deimv2_dinov3_m_8xb4-102e_coco.log)
 deimv2_dinov3_l_8xb4-68e_coco   | 56.0 | 56.0     | `+0.0` | ✅      | [download](https://github.com/flytocc/rtdetr-mmdet/releases/download/logs/deimv2_dinov3_l_8xb4-68e_coco.log)
 deimv2_dinov3_x_8xb4-58e_coco   | 57.8 | 57.8     | `+0.0` | ✅      | [download](https://github.com/flytocc/rtdetr-mmdet/releases/download/logs/deimv2_dinov3_x_8xb4-58e_coco.log)
 
