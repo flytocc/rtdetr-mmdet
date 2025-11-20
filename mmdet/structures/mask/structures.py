@@ -6,14 +6,10 @@ from typing import Sequence, Type, TypeVar
 import cv2
 import mmcv
 import numpy as np
+import pycocotools.mask as maskUtils
 import shapely.geometry as geometry
 import torch
 from mmcv.ops.roi_align import roi_align
-
-try:
-    import faster_coco_eval.core.mask as maskUtils
-except ImportError:
-    import pycocotools.mask as maskUtils
 
 T = TypeVar('T')
 

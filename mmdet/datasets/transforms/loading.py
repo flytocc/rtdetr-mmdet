@@ -3,6 +3,7 @@ from typing import Optional, Tuple, Union
 
 import mmcv
 import numpy as np
+import pycocotools.mask as maskUtils
 import torch
 from mmcv.transforms import BaseTransform
 from mmcv.transforms import LoadAnnotations as MMCV_LoadAnnotations
@@ -14,11 +15,6 @@ from mmdet.registry import TRANSFORMS
 from mmdet.structures.bbox import get_box_type
 from mmdet.structures.bbox.box_type import autocast_box_type
 from mmdet.structures.mask import BitmapMasks, PolygonMasks
-
-try:
-    import faster_coco_eval.core.mask as maskUtils
-except ImportError:
-    import pycocotools.mask as maskUtils
 
 
 @TRANSFORMS.register_module()

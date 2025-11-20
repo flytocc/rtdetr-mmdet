@@ -3,17 +3,13 @@ from typing import Dict, List, Optional, Union
 
 import mmengine
 import numpy as np
+import pycocotools.mask as maskUtils
 from mmengine.fileio import load
 from mmengine.logging import print_log
 from terminaltables import AsciiTable
 
 from mmdet.registry import METRICS
 from .coco_metric import CocoMetric
-
-try:
-    import faster_coco_eval.core.mask as maskUtils
-except ImportError:
-    import pycocotools.mask as maskUtils
 
 
 @METRICS.register_module()
