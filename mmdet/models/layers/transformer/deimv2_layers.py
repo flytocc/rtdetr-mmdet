@@ -503,6 +503,7 @@ class DEIMV2TransformerDecoder(DFINETransformerDecoder):
             self.embed_dims,
             self.ref_num_layers,
             act_cfg=self.ref_act_cfg)
+        self.norm = nn.Identity()  # without norm
 
         self.integral = Integral(self.reg_max, self.reg_scale)
         if self.with_lqe:

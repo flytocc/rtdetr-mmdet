@@ -971,6 +971,7 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             self.embed_dims,
             self.ref_num_layers,
             act_cfg=self.ref_act_cfg)
+        self.norm = nn.Identity()  # without norm
 
         self.integral = Integral(self.reg_max, self.reg_scale)
         if self.with_lqe:
@@ -1087,7 +1088,7 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                     reference_points_initial.detach()
 
                 if self.training:
-                    all_layers_outputs_classes.append(cls_branches[0](query))
+                    all_layers_outputs_classes.append(cls_branches[0](self.norm(query)))
                     all_layers_outputs_coords.append(reference_points_initial)
 
             # Refine bounding box corners using FDR,
@@ -1101,8 +1102,9 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                 clamp_wh=True)
 
             if self.training or lid == eval_idx:
-                hidden_states.append(query)
-                scores = cls_branches[lid](query)
+                norm_query = self.norm(query)
+                hidden_states.append((lid, norm_query))
+                scores = cls_branches[lid](norm_query)
                 if self.with_lqe:
                     # Lqe does not affect the performance here.
                     scores = self.lqe_layers[lid](scores, pred_corners)
