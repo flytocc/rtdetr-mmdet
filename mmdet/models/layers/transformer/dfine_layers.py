@@ -903,10 +903,6 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                  layer_scale: float = 1.0,
                  eval_idx: int = -1,
                  num_layers: int = 6,
-                 ref_num_layers: int = 2,
-                 ref_hidden_dim: Optional[int] = None,
-                 ref_act_cfg: ConfigType = dict(type='ReLU', inplace=True),
-                 lqe_act_cfg: ConfigType = dict(type='ReLU', inplace=True),
                  remove_cross_attn_value_proj_and_output_proj: bool = True,
                  update_query_pos: bool = True,
                  with_lqe: bool = False,
@@ -918,10 +914,6 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
         self.reg_max = reg_max
         self.reg_scale = reg_scale
         self.layer_scale = layer_scale
-        self.ref_num_layers = ref_num_layers
-        self.ref_hidden_dim = ref_hidden_dim
-        self.ref_act_cfg = ref_act_cfg
-        self.lqe_act_cfg = lqe_act_cfg
         self.update_query_pos = update_query_pos
         self.with_lqe = with_lqe
         self.remove_cross_attn_value_proj_and_output_proj = \
@@ -965,20 +957,12 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
             raise ValueError('There is not post_norm in '
                              f'{self._get_name()}')
 
-        self.ref_point_head = MLP(
-            4,
-            self.ref_hidden_dim or self.embed_dims * 2,
-            self.embed_dims,
-            self.ref_num_layers,
-            act_cfg=self.ref_act_cfg)
-        self.norm = nn.Identity()  # without norm
+        self.ref_point_head = MLP(4, self.embed_dims * 2, self.embed_dims, 2)
 
         self.integral = Integral(self.reg_max, self.reg_scale)
         if self.with_lqe:
-            self.lqe_layers = ModuleList([
-                LQE(4, 64, 2, self.reg_max, act_cfg=self.lqe_act_cfg)
-                for _ in range(self.num_layers)
-            ])
+            self.lqe_layers = ModuleList(
+                [LQE(4, 64, 2, self.reg_max) for _ in range(self.num_layers)])
 
     def forward(self, query: Tensor, value: Tensor, key_padding_mask: Tensor,
                 self_attn_mask: Tensor, reference_points: Tensor,
@@ -1088,7 +1072,8 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                     reference_points_initial.detach()
 
                 if self.training:
-                    all_layers_outputs_classes.append(cls_branches[0](self.norm(query)))
+                    all_layers_outputs_classes.append(cls_branches[0](
+                        self.norm(query)))
                     all_layers_outputs_coords.append(reference_points_initial)
 
             # Refine bounding box corners using FDR,

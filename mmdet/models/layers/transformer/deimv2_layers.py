@@ -16,7 +16,7 @@ from mmdet.utils import ConfigType, OptConfigType, OptMultiConfig
 from .dfine_layers import (DFINEFPN, LQE, DFINETransformerDecoder,
                            DFINETransformerDecoderLayer, Gate, Integral,
                            MultiNumPointsMultiScaleDeformableAttention,
-                           RepNCSPELAN4, distance2bbox)
+                           RepNCSPELAN4)
 from .rtdetr_layers import CSPLayer
 from .utils import MLP
 
@@ -456,12 +456,21 @@ class DEIMV2TransformerDecoderLayer(DFINETransformerDecoderLayer):
 class DEIMV2TransformerDecoder(DFINETransformerDecoder):
     """Transformer decoder of DEIM v2."""
 
-    def _init_layers(self) -> None:
-        """Initialize decoder layers.
+    def __init__(self,
+                 *args,
+                 ref_num_layers: int = 2,
+                 ref_hidden_dim: Optional[int] = None,
+                 ref_act_cfg: ConfigType = dict(type='SiLU', inplace=True),
+                 lqe_act_cfg: ConfigType = dict(type='SiLU', inplace=True),
+                 **kwargs) -> None:
+        self.ref_num_layers = ref_num_layers
+        self.ref_hidden_dim = ref_hidden_dim
+        self.ref_act_cfg = ref_act_cfg
+        self.lqe_act_cfg = lqe_act_cfg
+        super().__init__(*args, **kwargs)
 
-        NOTE only changes:
-            DFINETransformerDecoderLayer -> DEIMV2TransformerDecoderLayer
-        """
+    def _init_layers(self) -> None:
+        """Initialize decoder layers."""
         num_wide_layers = self.num_layers - self.eval_idx - 1
         self.layers = ModuleList([
             DEIMV2TransformerDecoderLayer(**self.layer_cfg)

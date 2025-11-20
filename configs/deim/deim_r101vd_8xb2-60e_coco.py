@@ -9,7 +9,6 @@ model = dict(
         ref_hidden_dim=256,
         ref_num_layers=3,
         ref_act_cfg=act_cfg,
-        # lqe_act_cfg=act_cfg,  # TODO SiLU in DEIM
         layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
     bbox_head=dict(
         reg_act_cfg=act_cfg,

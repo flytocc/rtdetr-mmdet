@@ -6,7 +6,7 @@ from torch import nn
 
 from mmdet.registry import MODELS, TASK_UTILS
 from mmdet.utils import ConfigType
-from ..layers import MLP, DEIMV2TransformerDecoder, RTDETRHybridEncoder
+from ..layers import DEIMV2TransformerDecoder, RTDETRHybridEncoder
 from ..layers.transformer.dfine_layers import (
     LQE, Gate, MultiNumPointsMultiScaleDeformableAttention)
 from .deformable_detr import DeformableDETR, MultiScaleDeformableAttention
