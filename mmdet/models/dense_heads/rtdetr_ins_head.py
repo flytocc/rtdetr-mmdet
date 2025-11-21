@@ -604,29 +604,29 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
         cls_avg_factor = max(cls_avg_factor, 1)
 
         if isinstance(self.loss_cls, RTDETRVarifocalLoss):
+            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
             bg_class_ind = self.num_classes
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
-            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
             pos_labels = labels[pos_inds]
             if self.vfl_iou_type == 'mask':
-                pos_mask_preds = mask_preds.detach()[pos_inds]
+                pos_mask_preds = mask_preds.detach()[mask_weights > 0]
                 pos_mask_preds = F.interpolate(
-                    pos_mask_preds,
+                    pos_mask_preds.unsqueeze(1),
                     scale_factor=2,
                     mode='bilinear',
-                    align_corners=False)
+                    align_corners=False).squeeze(1)
                 pos_mask_preds = (
                     pos_mask_preds > self.test_cfg.mask_thr_binary).float()
 
-                pos_mask_targets = mask_targets[pos_inds].float()
+                pos_mask_targets = mask_targets.float()
                 if pos_mask_preds.shape[-1] != pos_mask_targets.shape[-1] \
                         or pos_mask_preds.shape[-2] != pos_mask_targets.shape[-2]:
                     pos_mask_targets = F.interpolate(
-                        pos_mask_targets,
-                        scale_factor=pos_mask_preds.shape[-2:],
+                        pos_mask_targets.unsqueeze(1),
+                        size=pos_mask_preds.shape[-2:],
                         mode='bilinear',
-                        align_corners=False)
+                        align_corners=False).squeeze(1)
 
                 cls_iou_targets[pos_inds, pos_labels] = mask_overlaps(
                     pos_mask_preds, pos_mask_targets)
@@ -943,29 +943,29 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
 
         if len(cls_scores) > 0:
             if isinstance(self.loss_cls, RTDETRVarifocalLoss):
+                cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
                 bg_class_ind = self.num_classes
                 pos_inds = ((labels >= 0)
                             & (labels < bg_class_ind)).nonzero().squeeze(1)
-                cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
                 pos_labels = labels[pos_inds]
                 if self.vfl_iou_type == 'mask':
-                    pos_mask_preds = dn_mask_preds.detach()[pos_inds]
+                    pos_mask_preds = dn_mask_preds.detach()[mask_weights > 0]
                     pos_mask_preds = F.interpolate(
-                        pos_mask_preds,
+                        pos_mask_preds.unsqueeze(1),
                         scale_factor=2,
                         mode='bilinear',
-                        align_corners=False)
+                        align_corners=False).squeeze(1)
                     pos_mask_preds = (
                         pos_mask_preds > self.test_cfg.mask_thr_binary).float()
 
-                    pos_mask_targets = mask_targets[pos_inds].float()
+                    pos_mask_targets = mask_targets.float()
                     if pos_mask_preds.shape[-1] != pos_mask_targets.shape[-1] \
                             or pos_mask_preds.shape[-2] != pos_mask_targets.shape[-2]:
                         pos_mask_targets = F.interpolate(
-                            pos_mask_targets,
-                            scale_factor=pos_mask_preds.shape[-2:],
+                            pos_mask_targets.unsqueeze(1),
+                            size=pos_mask_preds.shape[-2:],
                             mode='bilinear',
-                            align_corners=False)
+                            align_corners=False).squeeze(1)
 
                     cls_iou_targets[pos_inds, pos_labels] = mask_overlaps(
                         pos_mask_preds, pos_mask_targets)
