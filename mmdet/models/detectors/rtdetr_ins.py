@@ -5,14 +5,16 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from mmcv.cnn import ConvModule
+from mmengine.model import BaseModule
 from torch import Tensor, nn
 
 from mmdet.models.layers.transformer import inverse_sigmoid
 from mmdet.registry import MODELS
 from mmdet.structures import OptSampleList
 from mmdet.structures.bbox import bbox_xyxy_to_cxcywh
-from mmdet.utils import ConfigType
+from mmdet.utils import ConfigType, OptConfigType
 from ..dense_heads.rtmdet_ins_head import MaskFeatModule
+from ..layers import DnQueryGenerator
 from .rtdetr import RTDETR
 
 
@@ -268,3 +270,163 @@ def mask2bbox_np(masks: Tensor) -> Tensor:
                                   dtype=np.float32)
 
     return torch.from_numpy(boxes).to(masks.device)
+
+
+class MaskFeatModule_ppdet(BaseModule):
+
+    def __init__(
+        self,
+        in_channels: int,
+        feat_channels: int = 256,
+        num_prototypes: int = 8,
+        act_cfg: ConfigType = dict(type='SiLU', inplace=True),
+        norm_cfg: ConfigType = dict(type='BN')
+    ) -> None:
+        super().__init__(init_cfg=None)
+
+        fpn_strides = [8, 16, 32]
+        if isinstance(in_channels, int):
+            in_channels = [in_channels] * len(fpn_strides)
+        assert len(in_channels) == len(fpn_strides)
+        reorder_index = np.argsort(fpn_strides, axis=0)
+        in_channels = [in_channels[i] for i in reorder_index]
+        fpn_strides = [fpn_strides[i] for i in reorder_index]
+        assert min(fpn_strides) == fpn_strides[0]
+        self.reorder_index = reorder_index
+        self.fpn_strides = fpn_strides
+
+        self.scale_heads = nn.ModuleList()
+        for i in range(len(fpn_strides)):
+            head_length = max(
+                1, int(np.log2(fpn_strides[i]) - np.log2(fpn_strides[0])))
+            scale_head = []
+            for k in range(head_length):
+                in_c = in_channels[i] if k == 0 else feat_channels
+                scale_head.append(
+                    ConvModule(
+                        in_c,
+                        feat_channels,
+                        3,
+                        padding=1,
+                        act_cfg=act_cfg,
+                        norm_cfg=norm_cfg))
+                if fpn_strides[i] != fpn_strides[0]:
+                    scale_head.append(
+                        nn.Upsample(
+                            scale_factor=2,
+                            mode='bilinear',
+                            align_corners=False))
+            self.scale_heads.append(nn.Sequential(*scale_head))
+
+        self.output_conv = ConvModule(
+            feat_channels,
+            num_prototypes,
+            3,
+            padding=1,
+            act_cfg=act_cfg,
+            norm_cfg=norm_cfg)
+
+    def forward(self, inputs):
+        x = [inputs[i] for i in self.reorder_index]
+        output = self.scale_heads[0](x[0])
+        for i in range(1, len(self.fpn_strides)):
+            output = output + F.interpolate(
+                self.scale_heads[i](x[i]),
+                size=output.shape[2:],
+                mode='bilinear',
+                align_corners=self.align_corners)
+        output = self.output_conv(output)
+        return output
+
+
+@MODELS.register_module()
+class MaskRTDETR_ppdet(RTDETRInsPlus):
+    """MaskRTDETR in PaddleDetection
+
+    Args:
+        dn_cfg (:obj:`ConfigDict` or dict, optional): Config of denoising
+            query generator. Defaults to `None`.
+    """
+
+    def __init__(self, *args, dn_cfg: OptConfigType = None, **kwargs) -> None:
+        super().__init__(*args, dn_cfg=dn_cfg, **kwargs)
+        self.dn_query_generator = DnQueryGenerator(**dn_cfg)
+
+    def _init_layers(self) -> None:
+        """Initialize layers except for backbone, neck and bbox_head."""
+        super(RTDETRIns, self)._init_layers()
+        self.mask_features = MaskFeatModule_ppdet(**self.mask_feat_cfg)
+        self.enc_mask_output = nn.Sequential(
+            ConvModule(
+                self.num_prototypes,
+                self.num_prototypes,
+                3,
+                padding=1,
+                act_cfg=dict(type='SiLU', inplace=True),
+                norm_cfg=dict(type='BN')),
+            ConvModule(
+                self.num_prototypes,
+                self.mask_dims,
+                1,
+                act_cfg=None)
+        ) if self.num_prototypes != self.mask_dims else nn.Identity()
+
+    def pre_decoder(
+        self,
+        memory: Tensor,
+        memory_mask: Tensor,
+        mask_features: Tensor,
+        spatial_shapes: Tensor,
+        batch_data_samples: OptSampleList = None,
+    ) -> Tuple[Dict]:
+        """Prepare intermediate variables before entering Transformer decoder,
+        such as `query`, `query_pos`, and `reference_points`.
+
+        Args:
+            memory (Tensor): The output embeddings of the Transformer encoder,
+                has shape (bs, num_feat_points, dim).
+            memory_mask (Tensor): ByteTensor, the padding mask of the memory,
+                has shape (bs, num_feat_points). Will only be used when
+                `as_two_stage` is `True`.
+            mask_features (Tensor): instance mask features that
+                has shape (bs, dim, h, w).
+            spatial_shapes (Tensor): Spatial shapes of features in all levels.
+                With shape (num_levels, 2), last dimension represents (h, w).
+                Will only be used when `as_two_stage` is `True`.
+            batch_data_samples (list[:obj:`DetDataSample`]): The batch
+                data samples. It usually includes information such
+                as `gt_instance` or `gt_panoptic_seg` or `gt_sem_seg`.
+                Defaults to None.
+
+        Returns:
+            tuple[dict]: The decoder_inputs_dict and head_inputs_dict.
+
+            - decoder_inputs_dict (dict): The keyword dictionary args of
+              `self.forward_decoder()`, which includes 'query', 'memory',
+              `reference_points`, and `dn_mask`. The reference points of
+              decoder input here are 4D boxes, although it has `points`
+              in its name.
+            - head_inputs_dict (dict): The keyword dictionary args of the
+              bbox_head functions, which includes `topk_score`, `topk_coords`,
+              `mask_features` and `dn_meta` when `self.training` is `True`,
+              else is empty.
+        """
+        decoder_inputs_dict, head_inputs_dict = super().pre_decoder(
+            memory, memory_mask, mask_features, spatial_shapes,
+            batch_data_samples)
+
+        # NOTE loss for init_outputs may be bad for training
+        if self.training:
+            init_coords = decoder_inputs_dict['reference_points'].sigmoid()
+            norm_query = self.decoder.norm(decoder_inputs_dict['query'])
+            init_score = self.bbox_head.cls_branches[
+                self.decoder.num_layers](norm_query)
+            init_mask_feat = self.bbox_head.mask_branches[
+                self.decoder.num_layers](norm_query)
+            init_mask = self.bbox_head.feat_to_mask(init_mask_feat,
+                                                    mask_features)
+            head_inputs_dict['init_outputs_class'] = init_score
+            head_inputs_dict['init_outputs_coord'] = init_coords
+            head_inputs_dict['init_outputs_mask'] = init_mask
+
+        return decoder_inputs_dict, head_inputs_dict

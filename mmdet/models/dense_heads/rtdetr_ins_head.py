@@ -1169,3 +1169,159 @@ def mask_overlaps(masks1: Tensor, masks2: Tensor, eps: float = 1e-6):
     union = area1 + area2 - overlap
     iou = overlap / (union + eps)
     return iou
+
+
+@MODELS.register_module()
+class MaskRTDETRHead_ppdet(RTDETRInsHead):
+
+    def loss(self, hidden_states: Tensor, references: List[Tensor],
+             enc_outputs_class: Tensor, enc_outputs_coord: Tensor,
+             enc_outputs_mask: Tensor, init_outputs_class: Tensor,
+             init_outputs_coord: Tensor, init_outputs_mask: Tensor,
+             mask_features: Tensor, batch_data_samples: SampleList,
+             dn_meta: Dict[str, int]) -> dict:
+        """Perform forward propagation and loss calculation of the detection
+        head on the queries of the upstream network.
+
+        Args:
+            hidden_states (Tensor): Hidden states output from each decoder
+                layer, has shape (num_decoder_layers, bs, num_queries_total,
+                dim), where `num_queries_total` is the sum of
+                `num_denoising_queries` and `num_matching_queries` when
+                `self.training` is `True`, else `num_matching_queries`.
+            references (list[Tensor]): List of the reference from the decoder.
+                The first reference is the `init_reference` (initial) and the
+                other num_decoder_layers(6) references are `inter_references`
+                (intermediate). The `init_reference` has shape (bs,
+                num_queries_total, 4) and each `inter_reference` has shape
+                (bs, num_queries, 4) with the last dimension arranged as
+                (cx, cy, w, h).
+            enc_outputs_class (Tensor): The score of each point on encode
+                feature map, has shape (bs, num_feat_points, cls_out_channels).
+            enc_outputs_coord (Tensor): The proposal generate from the
+                encode feature map, has shape (bs, num_feat_points, 4) with the
+                last dimension arranged as (cx, cy, w, h).
+            enc_outputs_mask (Tensor): The mask generate from the
+                encode feature map, has shape (bs, num_feat_points,
+                mask_out_channels).
+            mask_features (Tensor): instance mask features that
+                has shape (bs, dim, h, w).
+            batch_data_samples (list[:obj:`DetDataSample`]): The Data
+                Samples. It usually includes information such as
+                `gt_instance`, `gt_panoptic_seg` and `gt_sem_seg`.
+            dn_meta (Dict[str, int]): The dictionary saves information about
+              group collation, including 'num_denoising_queries' and
+              'num_denoising_groups'. It will be used for split outputs of
+              denoising and matching parts and loss calculation.
+
+        Returns:
+            dict: A dictionary of loss components.
+        """
+        batch_gt_instances = []
+        batch_img_metas = []
+        for data_sample in batch_data_samples:
+            gt_instances = data_sample.gt_instances
+            if isinstance(gt_instances.masks, BaseInstanceMasks):
+                gt_instances.masks = gt_instances.masks.to_tensor(
+                    dtype=torch.bool, device=mask_features.device)
+            assert isinstance(gt_instances.masks, Tensor)
+            batch_img_metas.append(data_sample.metainfo)
+            batch_gt_instances.append(data_sample.gt_instances)
+
+        outs = self(hidden_states, references, mask_features)
+        loss_inputs = outs + (enc_outputs_class, enc_outputs_coord,
+                              enc_outputs_mask, init_outputs_class,
+                              init_outputs_coord, init_outputs_mask,
+                              batch_gt_instances, batch_img_metas, dn_meta)
+        losses = self.loss_by_feat(*loss_inputs)
+        return losses
+
+    def loss_by_feat(
+        self,
+        all_layers_cls_scores: Tensor,
+        all_layers_bbox_preds: Tensor,
+        all_layers_mask_preds: Tensor,
+        enc_cls_scores: Tensor,
+        enc_bbox_preds: Tensor,
+        enc_mask_preds: Tensor,
+        init_cls_scores: Tensor,
+        init_bbox_preds: Tensor,
+        init_mask_preds: Tensor,
+        batch_gt_instances: InstanceList,
+        batch_img_metas: List[dict],
+        dn_meta: Dict[str, int],
+        batch_gt_instances_ignore: OptInstanceList = None
+    ) -> Dict[str, Tensor]:
+        """Loss function.
+
+        Args:
+            batch_gt_instances (list[:obj:`InstanceData`]): Batch of
+                gt_instance. It usually includes ``bboxes`` and ``labels``
+                attributes.
+            batch_img_metas (list[dict]): Meta information of each image, e.g.,
+                image size, scaling factor, etc.
+            dn_meta (Dict[str, int]): The dictionary saves information about
+                group collation, including 'num_denoising_queries' and
+                'num_denoising_groups'. It will be used for split outputs of
+                denoising and matching parts and loss calculation.
+            batch_gt_instances_ignore (list[:obj:`InstanceData`], optional):
+                Batch of gt_instances_ignore. It includes ``bboxes`` attribute
+                data that is ignored during training and testing.
+                Defaults to None.
+
+        Returns:
+            dict[str, Tensor]: A dictionary of loss components.
+        """
+        loss_dict = super().loss_by_feat(
+            all_layers_cls_scores,
+            all_layers_bbox_preds,
+            all_layers_mask_preds,
+            enc_cls_scores,
+            enc_bbox_preds,
+            enc_mask_preds,
+            batch_gt_instances,
+            batch_img_metas,
+            dn_meta,
+            batch_gt_instances_ignore=batch_gt_instances_ignore)
+
+        if init_cls_scores is not None:
+            # extract denoising and matching part of outputs
+            (init_layers_matching_cls_scores, init_layers_matching_bbox_preds,
+             init_layers_matching_mask_preds, init_layers_denoising_cls_scores,
+             init_layers_denoising_bbox_preds,
+             init_layers_denoising_mask_preds) = self.split_outputs(
+                [init_cls_scores], [init_bbox_preds], [init_mask_preds],
+                dn_meta)
+
+            (init_losses_cls, init_losses_bbox, init_losses_iou,
+             init_losses_mask, init_losses_dice) = multi_apply(
+                self.loss_by_feat_single,
+                init_layers_matching_cls_scores,
+                init_layers_matching_bbox_preds,
+                init_layers_matching_mask_preds,
+                batch_gt_instances=batch_gt_instances,
+                batch_img_metas=batch_img_metas)
+            loss_dict['init_loss_cls'] = init_losses_cls[-1]
+            loss_dict['init_loss_bbox'] = init_losses_bbox[-1]
+            loss_dict['init_loss_iou'] = init_losses_iou[-1]
+            loss_dict['init_loss_mask'] = init_losses_mask[-1]
+            loss_dict['init_loss_dice'] = init_losses_dice[-1]
+
+            if init_layers_denoising_cls_scores is not None:
+                # calculate denoising loss from all decoder layers
+                (dn_init_losses_cls, dn_init_losses_bbox, dn_init_losses_iou,
+                 dn_init_losses_mask, dn_init_losses_dice) = self.loss_dn(
+                    init_layers_denoising_cls_scores,
+                    init_layers_denoising_bbox_preds,
+                    init_layers_denoising_mask_preds,
+                    batch_gt_instances=batch_gt_instances,
+                    batch_img_metas=batch_img_metas,
+                    dn_meta=dn_meta)
+                # collate denoising loss
+                loss_dict['dn_init_loss_cls'] = dn_init_losses_cls[-1]
+                loss_dict['dn_init_loss_bbox'] = dn_init_losses_bbox[-1]
+                loss_dict['dn_init_loss_iou'] = dn_init_losses_iou[-1]
+                loss_dict['dn_init_loss_mask'] = dn_init_losses_mask[-1]
+                loss_dict['dn_init_loss_dice'] = dn_init_losses_dice[-1]
+
+        return loss_dict
