@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import copy
 import math
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Literal, Optional, Tuple
 
 import torch
 import torch.nn.functional as F
@@ -42,6 +42,7 @@ class RTDETRInsHead(RTDETRHead):
                  mask_dims: Optional[int] = None,
                  num_mask_fcs: int = 3,
                  share_mask_layer: bool = True,
+                 vfl_iou_type: Literal['bbox', 'mask'] = 'bbox',
                  loss_mask: ConfigType = dict(
                      type='CrossEntropyLoss',
                      use_sigmoid=True,
@@ -59,6 +60,7 @@ class RTDETRInsHead(RTDETRHead):
         self.mask_dims = mask_dims or embed_dims
         self.num_mask_fcs = num_mask_fcs
         self.share_mask_layer = share_mask_layer
+        self.vfl_iou_type = vfl_iou_type
         super().__init__(*args, embed_dims=embed_dims, **kwargs)
 
         if self.train_cfg:
@@ -251,17 +253,17 @@ class RTDETRInsHead(RTDETRHead):
         if enc_cls_scores is not None:
             # NOTE The enc_loss calculation of the DINO is
             # different from that of Deformable DETR.
-            (enc_loss_cls, enc_losses_bbox, enc_losses_iou, enc_losses_mask,
-             enc_losses_dice) = \
+            (enc_loss_cls, enc_loss_bbox, enc_loss_iou, enc_loss_mask,
+             enc_loss_dice) = \
                 self.loss_by_feat_single(
                     enc_cls_scores, enc_bbox_preds, enc_mask_preds,
                     batch_gt_instances=batch_gt_instances,
                     batch_img_metas=batch_img_metas)
             loss_dict['enc_loss_cls'] = enc_loss_cls
-            loss_dict['enc_loss_bbox'] = enc_losses_bbox
-            loss_dict['enc_loss_iou'] = enc_losses_iou
-            loss_dict['enc_loss_mask'] = enc_losses_mask
-            loss_dict['enc_loss_dice'] = enc_losses_dice
+            loss_dict['enc_loss_bbox'] = enc_loss_bbox
+            loss_dict['enc_loss_iou'] = enc_loss_iou
+            loss_dict['enc_loss_mask'] = enc_loss_mask
+            loss_dict['enc_loss_dice'] = enc_loss_dice
 
         if all_layers_denoising_cls_scores is not None:
             # calculate denoising loss from all decoder layers
@@ -289,6 +291,7 @@ class RTDETRInsHead(RTDETRHead):
                 loss_dict[f'd{num_dec_layer}.dn_loss_iou'] = loss_iou_i
                 loss_dict[f'd{num_dec_layer}.dn_loss_mask'] = loss_mask_i
                 loss_dict[f'd{num_dec_layer}.dn_loss_dice'] = loss_dice_i
+
         return loss_dict
 
     def loss_by_feat_single(self, cls_scores: Tensor, bbox_preds: Tensor,
@@ -346,15 +349,38 @@ class RTDETRInsHead(RTDETRHead):
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
             cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
-            pos_bbox_targets = bbox_targets[pos_inds]
-            pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
-            pos_bbox_pred = bbox_preds.reshape(-1, 4)[pos_inds]
-            pos_decode_bbox_pred = bbox_cxcywh_to_xyxy(pos_bbox_pred)
             pos_labels = labels[pos_inds]
-            cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
-                pos_decode_bbox_pred.detach(),
-                pos_decode_bbox_targets,
-                is_aligned=True)
+            if self.vfl_iou_type == 'mask':
+                pos_mask_preds = mask_preds.detach()[pos_inds]
+                pos_mask_preds = F.interpolate(
+                    pos_mask_preds,
+                    scale_factor=2,
+                    mode='bilinear',
+                    align_corners=False)
+                pos_mask_preds = (
+                    pos_mask_preds > self.test_cfg.mask_thr_binary).float()
+
+                pos_mask_targets = mask_targets[pos_inds].float()
+                if pos_mask_preds.shape[-1] != pos_mask_targets.shape[-1] \
+                        or pos_mask_preds.shape[-2] != pos_mask_targets.shape[-2]:
+                    pos_mask_targets = F.interpolate(
+                        pos_mask_targets,
+                        scale_factor=pos_mask_preds.shape[-2:],
+                        mode='bilinear',
+                        align_corners=False)
+
+                cls_iou_targets[pos_inds, pos_labels] = mask_overlaps(
+                    pos_mask_preds, pos_mask_targets)
+            else:
+                pos_bbox_targets = bbox_targets[pos_inds]
+                pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
+                pos_bbox_pred = bbox_preds.detach().reshape(-1, 4)[pos_inds]
+                pos_decode_bbox_pred = bbox_cxcywh_to_xyxy(pos_bbox_pred)
+                cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
+                    pos_decode_bbox_pred,
+                    pos_decode_bbox_targets,
+                    is_aligned=True)
+
             loss_cls = self.loss_cls(
                 cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
         else:
@@ -662,15 +688,38 @@ class RTDETRInsHead(RTDETRHead):
                 pos_inds = ((labels >= 0)
                             & (labels < bg_class_ind)).nonzero().squeeze(1)
                 cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
-                pos_bbox_targets = bbox_targets[pos_inds]
-                pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
-                pos_bbox_pred = dn_bbox_preds.detach().reshape(-1, 4)[pos_inds]
-                pos_decode_bbox_pred = bbox_cxcywh_to_xyxy(pos_bbox_pred)
                 pos_labels = labels[pos_inds]
-                cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
-                    pos_decode_bbox_pred,
-                    pos_decode_bbox_targets,
-                    is_aligned=True)
+                if self.vfl_iou_type == 'mask':
+                    pos_mask_preds = dn_mask_preds.detach()[pos_inds]
+                    pos_mask_preds = F.interpolate(
+                        pos_mask_preds,
+                        scale_factor=2,
+                        mode='bilinear',
+                        align_corners=False)
+                    pos_mask_preds = (
+                        pos_mask_preds > self.test_cfg.mask_thr_binary).float()
+
+                    pos_mask_targets = mask_targets[pos_inds].float()
+                    if pos_mask_preds.shape[-1] != pos_mask_targets.shape[-1] \
+                            or pos_mask_preds.shape[-2] != pos_mask_targets.shape[-2]:
+                        pos_mask_targets = F.interpolate(
+                            pos_mask_targets,
+                            scale_factor=pos_mask_preds.shape[-2:],
+                            mode='bilinear',
+                            align_corners=False)
+
+                    cls_iou_targets[pos_inds, pos_labels] = mask_overlaps(
+                        pos_mask_preds, pos_mask_targets)
+                else:
+                    pos_bbox_targets = bbox_targets[pos_inds]
+                    pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
+                    pos_bbox_pred = dn_bbox_preds.detach().reshape(-1, 4)[pos_inds]
+                    pos_decode_bbox_pred = bbox_cxcywh_to_xyxy(pos_bbox_pred)
+                    cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
+                        pos_decode_bbox_pred,
+                        pos_decode_bbox_targets,
+                        is_aligned=True)
+
                 loss_cls = self.loss_cls(
                     cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
             else:
@@ -1111,3 +1160,12 @@ class RTDETRInsHead(RTDETRHead):
                 all_layers_denoising_cls_scores,
                 all_layers_denoising_bbox_preds,
                 all_layers_denoising_mask_preds)
+
+
+def mask_overlaps(masks1: Tensor, masks2: Tensor, eps: float = 1e-6):
+    overlap = (masks1 * masks2).sum((-1, -2))
+    area1 = masks1.sum((-1, -2))
+    area2 = masks2.sum((-1, -2))
+    union = area1 + area2 - overlap
+    iou = overlap / (union + eps)
+    return iou
