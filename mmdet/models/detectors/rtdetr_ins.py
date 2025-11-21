@@ -4,6 +4,7 @@ from typing import Dict, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
+from mmcv.cnn import ConvModule
 from torch import Tensor, nn
 
 from mmdet.models.layers.transformer import inverse_sigmoid
@@ -203,6 +204,33 @@ class RTDETRIns(RTDETR):
 @MODELS.register_module()
 class RTDETRInsPlus(RTDETRIns):
 
+    def __init__(self,
+                 *args,
+                 num_prototypes: int = 64,
+                 mask_dims: int = 32,
+                 **kwargs) -> None:
+        self.num_prototypes = num_prototypes
+        self.mask_dims = mask_dims
+        super().__init__(*args, **kwargs)
+
+    def _init_layers(self) -> None:
+        """Initialize layers except for backbone, neck and bbox_head."""
+        super()._init_layers()
+        self.enc_mask_output = nn.Sequential(
+            ConvModule(
+                self.num_prototypes,
+                self.num_prototypes,
+                3,
+                padding=1,
+                act_cfg=dict(type='SiLU', inplace=True),
+                norm_cfg=dict(type='BN')),
+            ConvModule(
+                self.num_prototypes,
+                self.mask_dims,
+                1,
+                act_cfg=None)
+        ) if self.num_prototypes != self.mask_dims else nn.Identity()
+
     def pre_transformer(
             self,
             mlvl_feats: Tuple[Tensor],
@@ -220,7 +248,8 @@ class RTDETRInsPlus(RTDETRIns):
         mask_features = encoder_outputs_dict.pop('mask_features')
         mask_features = c2_feat + F.interpolate(
             mask_features, size=c2_feat.shape[-2:], mode='bilinear')
-        encoder_outputs_dict['mask_features'] = mask_features
+        encoder_outputs_dict['mask_features'] = self.enc_mask_output(
+            mask_features)
         return encoder_outputs_dict
 
 
