@@ -4,7 +4,7 @@ from typing import Dict, Tuple
 import numpy as np
 import torch
 import torch.nn.functional as F
-from torch import Tensor
+from torch import Tensor, nn
 
 from mmdet.models.layers.transformer import inverse_sigmoid
 from mmdet.registry import MODELS
@@ -37,6 +37,7 @@ class RTDETRIns(RTDETR):
         """Initialize layers except for backbone, neck and bbox_head."""
         super()._init_layers()
         self.mask_features = MaskFeatModule(**self.mask_feat_cfg)
+        self.decoder.norm = nn.LayerNorm(self.embed_dims)
 
     def forward_encoder(self, mlvl_feats: Tuple[Tensor],
                         spatial_shapes: Tensor) -> Dict:
@@ -128,7 +129,7 @@ class RTDETRIns(RTDETR):
             memory, memory_mask, spatial_shapes)
         enc_outputs_class = self.bbox_head.cls_branches[
             self.decoder.num_layers](
-                output_memory)
+                self.decoder.norm(output_memory))
 
         # NOTE The DINO selects top-k proposals according to scores of
         # multi-class classification, while DeformDETR, where the input
@@ -146,15 +147,15 @@ class RTDETRIns(RTDETR):
             self.decoder.num_layers](query) + topk_output_proposals
 
         # for mask
-        enc_outputs_mask = self.bbox_head.mask_branches[
-            self.decoder.num_layers](query)  # shuold norm?
-
-        topk_mask = self.bbox_head.feat_to_mask(enc_outputs_mask,
+        enc_mask_feat = self.bbox_head.mask_branches[
+            self.decoder.num_layers](self.decoder.norm(query))
+        topk_mask = self.bbox_head.feat_to_mask(enc_mask_feat,
                                                 mask_features)
 
         # unified reference points
         h, w = topk_mask.shape[-2:]
         factor = topk_mask.new_tensor([w, h, w, h]).unsqueeze(0)
+        # mask to box is a non-differentiable operation
         masks = topk_mask.detach().reshape(-1, h, w) > 0
         topk_coords_xyxy = mask2bbox_np(masks).reshape(bs, -1, 4)
         topk_coords_normalized = bbox_xyxy_to_cxcywh(topk_coords_xyxy) / factor
