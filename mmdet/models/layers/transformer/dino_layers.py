@@ -150,6 +150,7 @@ class CdnQueryGenerator(BaseModule):
                  num_matching_queries: int,
                  label_noise_scale: float = 0.5,
                  box_noise_scale: float = 1.0,
+                 contrastive: bool = True,
                  group_cfg: OptConfigType = None) -> None:
         super().__init__()
         self.num_classes = num_classes
@@ -157,6 +158,7 @@ class CdnQueryGenerator(BaseModule):
         self.num_matching_queries = num_matching_queries
         self.label_noise_scale = label_noise_scale
         self.box_noise_scale = box_noise_scale
+        self.contrastive = contrastive
 
         # prepare grouping strategy
         group_cfg = {} if group_cfg is None else group_cfg
@@ -419,7 +421,8 @@ class CdnQueryGenerator(BaseModule):
 
         # calculate the random part of the added noise
         rand_part = torch.rand_like(gt_bboxes_expand)  # [0, 1)
-        rand_part[negative_idx] += 1.0  # pos: [0, 1); neg: [1, 2)
+        if self.contrastive:
+            rand_part[negative_idx] += 1.0  # pos: [0, 1); neg: [1, 2)
         rand_part *= rand_sign  # pos: (-1, 1); neg: (-2, -1] U [1, 2)
 
         # add noise to the bboxes
