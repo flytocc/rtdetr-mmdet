@@ -120,7 +120,7 @@ class RTDETRHead(DINOHead):
             num_total_pos * 1.0 + num_total_neg * self.bg_cls_weight
         if self.sync_cls_avg_factor:
             cls_avg_factor = reduce_mean(
-                cls_scores.new_tensor([cls_avg_factor]))
+                cls_scores.new_tensor([cls_avg_factor])).item()
         cls_avg_factor = max(cls_avg_factor, 1)
 
         if len(cls_scores) > 0:
@@ -152,8 +152,12 @@ class RTDETRHead(DINOHead):
 
         # Compute the average number of gt boxes across all gpus, for
         # normalization purposes
-        num_total_pos = loss_cls.new_tensor([num_total_pos])
-        num_total_pos = torch.clamp(reduce_mean(num_total_pos), min=1).item()
+        if self.bg_cls_weight == 0:
+            num_total_pos = cls_avg_factor
+        else:
+            num_total_pos = dn_bbox_preds.new_tensor([num_total_pos])
+            num_total_pos = torch.clamp(
+                reduce_mean(num_total_pos), min=1).item()
 
         # construct factors used for rescale bboxes
         factors = []
@@ -222,7 +226,7 @@ class RTDETRHead(DINOHead):
             num_total_neg * self.bg_cls_weight
         if self.sync_cls_avg_factor:
             cls_avg_factor = reduce_mean(
-                cls_scores.new_tensor([cls_avg_factor]))
+                cls_scores.new_tensor([cls_avg_factor])).item()
         cls_avg_factor = max(cls_avg_factor, 1)
 
         if isinstance(self.loss_cls, VarifocalLoss):
@@ -247,8 +251,12 @@ class RTDETRHead(DINOHead):
 
         # Compute the average number of gt boxes across all gpus, for
         # normalization purposes
-        num_total_pos = loss_cls.new_tensor([num_total_pos])
-        num_total_pos = torch.clamp(reduce_mean(num_total_pos), min=1).item()
+        if self.bg_cls_weight == 0:
+            num_total_pos = cls_avg_factor
+        else:
+            num_total_pos = bbox_preds.new_tensor([num_total_pos])
+            num_total_pos = torch.clamp(
+                reduce_mean(num_total_pos), min=1).item()
 
         # construct factors used for rescale bboxes
         factors = []

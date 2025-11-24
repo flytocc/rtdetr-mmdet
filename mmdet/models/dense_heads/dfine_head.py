@@ -512,7 +512,7 @@ class DFINEHead(RTDETRHead):
             num_total_neg * self.bg_cls_weight
         if self.sync_cls_avg_factor:
             cls_avg_factor = reduce_mean(
-                cls_scores.new_tensor([cls_avg_factor]))
+                cls_scores.new_tensor([cls_avg_factor])).item()
         cls_avg_factor = max(cls_avg_factor, 1)
 
         if isinstance(self.loss_cls, VarifocalLoss):
@@ -554,9 +554,12 @@ class DFINEHead(RTDETRHead):
 
             # Compute the average number of gt boxes across all gpus, for
             # normalization purposes
-            bbox_avg_factor = bbox_preds.new_tensor([num_total_bbox_pos])
-            bbox_avg_factor = torch.clamp(
-                reduce_mean(bbox_avg_factor), min=1).item()
+            if self.bg_cls_weight == 0:
+                bbox_avg_factor = cls_avg_factor
+            else:
+                bbox_avg_factor = bbox_preds.new_tensor([bbox_avg_factor])
+                bbox_avg_factor = torch.clamp(
+                    reduce_mean(bbox_avg_factor), min=1).item()
 
             self.cached_bbox_targets[num_queries] = (bbox_targets,
                                                      bbox_weights,
@@ -844,14 +847,17 @@ class DFINEHead(RTDETRHead):
                 num_total_pos * 1.0 + num_total_neg * self.bg_cls_weight
             if self.sync_cls_avg_factor:
                 cls_avg_factor = reduce_mean(
-                    dn_bbox_preds.new_tensor([cls_avg_factor]))
+                    dn_bbox_preds.new_tensor([cls_avg_factor])).item()
             cls_avg_factor = max(cls_avg_factor, 1)
 
             # Compute the average number of gt boxes across all gpus, for
             # normalization purposes
-            bbox_avg_factor = dn_bbox_preds.new_tensor([num_total_pos])
-            bbox_avg_factor = torch.clamp(
-                reduce_mean(bbox_avg_factor), min=1).item()
+            if self.bg_cls_weight == 0:
+                bbox_avg_factor = cls_avg_factor
+            else:
+                bbox_avg_factor = dn_bbox_preds.new_tensor([bbox_avg_factor])
+                bbox_avg_factor = torch.clamp(
+                    reduce_mean(bbox_avg_factor), min=1).item()
 
             self.cached_dn_targets = (labels, label_weights, bbox_targets,
                                       bbox_weights, num_total_pos,
@@ -1441,17 +1447,14 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
              batch_match_indices, initial_bbox_preds, merged_match_indices,
              batch_gt_instances, batch_img_metas)
 
-        num_imgs, num_queries = mask_preds.shape[:2]
-
         mask_targets_list, mask_weights_list, mask_num_pos_list = multi_apply(
             self._get_mask_targets_single,
             batch_match_indices,
             batch_gt_instances,
             batch_img_metas,
-            num_queries=num_queries,
+            num_queries=mask_preds.shape[1],
             device=bbox_preds.device)
         num_total_pos = sum(mask_num_pos_list)
-        num_total_neg = num_imgs * num_queries - num_total_pos
         mask_targets = torch.cat(mask_targets_list, 0)
         mask_weights = torch.stack(mask_weights_list, 0)
 
@@ -1459,13 +1462,10 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         # shape (batch_size, num_queries, h, w) -> (num_total_gts, h, w)
         mask_preds = mask_preds[mask_weights > 0]
 
-        # construct weighted avg_factor to match with the official DETR repo
-        mask_avg_factor = num_total_pos * 1.0 + \
-            num_total_neg * self.bg_cls_weight
-        if self.sync_cls_avg_factor:
-            mask_avg_factor = reduce_mean(
-                mask_preds.new_tensor([mask_avg_factor]))
-        mask_avg_factor = max(mask_avg_factor, 1)
+        # Compute the average number of gt boxes across all gpus, for
+        # normalization purposes
+        num_total_pos = bbox_preds.new_tensor([num_total_pos])
+        num_total_pos = torch.clamp(reduce_mean(num_total_pos), min=1).item()
 
         with torch.no_grad():
             points_coords = get_uncertain_point_coords_with_randomness(
@@ -1480,7 +1480,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
 
         # dice loss
         loss_dice = self.loss_dice(
-            mask_point_preds, mask_point_targets, avg_factor=mask_avg_factor)
+            mask_point_preds, mask_point_targets, avg_factor=num_total_pos)
 
         # mask loss
         # shape (num_queries, num_points) -> (num_queries * num_points, )
@@ -1490,10 +1490,10 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         loss_mask = self.loss_mask(
             mask_point_preds,
             mask_point_targets,
-            avg_factor=mask_avg_factor * self.num_points)
+            avg_factor=num_total_pos * self.num_points)
 
-        return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf, loss_dice,
-                loss_mask)
+        return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf, loss_mask,
+                loss_dice)
 
     @torch.no_grad()
     def _get_mask_targets_single(self, match_indices: Tuple[Tensor, Tensor],
@@ -1580,32 +1580,28 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
                     loss_mask, loss_dice)
 
         if self.cached_dn_mask_targets is None:
-            (mask_targets_list, mask_weights_list, mask_num_pos_list,
-             mask_num_neg_list) = multi_apply(
+            (mask_targets_list, mask_weights_list,
+             mask_num_pos_list) = multi_apply(
                  self._get_dn_mask_targets_single,
                  batch_gt_instances,
                  batch_img_metas,
                  dn_meta=dn_meta)
             num_total_pos = sum(mask_num_pos_list)
-            num_total_neg = sum(mask_num_neg_list)
             mask_targets = torch.cat(mask_targets_list, 0)
             mask_weights = torch.stack(mask_weights_list, 0)
 
-            # construct weighted avg_factor
-            # to match with the official DETR repo
-            mask_avg_factor = \
-                num_total_pos * 1.0 + num_total_neg * self.bg_cls_weight
-            if self.sync_cls_avg_factor:
-                mask_avg_factor = reduce_mean(
-                    dn_bbox_preds.new_tensor([mask_avg_factor]))
-            mask_avg_factor = max(mask_avg_factor, 1)
+            # Compute the average number of gt boxes across all gpus, for
+            # normalization purposes
+            num_total_pos = dn_mask_preds.new_tensor([num_total_pos])
+            num_total_pos = torch.clamp(
+                reduce_mean(num_total_pos), min=1).item()
 
             self.cached_dn_mask_targets = (
-                mask_targets, mask_weights, mask_avg_factor)
+                mask_targets, mask_weights, num_total_pos)
         else:
             # use cached dn targets
             (mask_targets, mask_weights,
-             mask_avg_factor) = self.cached_dn_mask_targets
+             num_total_pos) = self.cached_dn_mask_targets
 
         # extract positive ones
         # shape (batch_size, num_queries, h, w) -> (num_total_gts, h, w)
@@ -1624,7 +1620,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
 
         # dice loss
         loss_dice = self.loss_dice(
-            mask_point_preds, mask_point_targets, avg_factor=mask_avg_factor)
+            mask_point_preds, mask_point_targets, avg_factor=num_total_pos)
 
         # mask loss
         # shape (num_queries, num_points) -> (num_queries * num_points, )
@@ -1634,7 +1630,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         loss_mask = self.loss_mask(
             mask_point_preds,
             mask_point_targets,
-            avg_factor=mask_avg_factor * self.num_points)
+            avg_factor=num_total_pos * self.num_points)
 
         return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf, loss_mask,
                 loss_dice)
@@ -1657,11 +1653,8 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         else:
             pos_inds = gt_masks.new_tensor([], dtype=torch.long)
 
-        neg_inds = pos_inds + num_queries_each_group // 2
-
         mask_targets = gt_masks.repeat([num_groups, 1, 1])
         mask_weights = torch.zeros(num_denoising_queries, device=device)
         mask_weights[pos_inds] = 1.0
 
-        return (mask_targets, mask_weights, pos_inds.numel(),
-                neg_inds.numel())
+        return mask_targets, mask_weights, pos_inds.numel()
