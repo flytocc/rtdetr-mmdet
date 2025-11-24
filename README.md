@@ -1,3 +1,12 @@
+### TODO
+
+- [ ] RTDETRv4
+- [ ] Instance Segmentation for DEIM / DEIMv2
+- [x] Instance Segmentation for RTDETR / RTDETRv2
+- [x] DEIMv2
+
+***
+
 ### Feel free to open an issue
 
 DEIM v2                         | ours | official | gap    | checked | log
