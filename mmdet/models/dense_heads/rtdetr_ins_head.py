@@ -21,10 +21,8 @@ from ..utils import get_uncertain_point_coords_with_randomness, multi_apply
 from .rtdetr_head import RTDETRHead
 
 
-@MODELS.register_module()
-class RTDETRInsHead(RTDETRHead):
-    """RTDETR Head for Instance.
-
+class RTDETRInsHeadMixup:
+    """
     Args:
         mask_dims (int): The dims of mask head embedding.
         num_mask_fcs (int): Number of fully-connected layers used in `FFN`,
@@ -41,7 +39,8 @@ class RTDETRInsHead(RTDETRHead):
                  embed_dims: int = 256,
                  mask_dims: Optional[int] = None,
                  num_mask_fcs: int = 3,
-                 share_mask_layer: bool = True,
+                 share_mask_layer: Optional[bool] = True,
+                 share_pred_layer: bool = False,
                  vfl_iou_type: Literal['bbox', 'mask'] = 'bbox',
                  loss_mask: ConfigType = dict(
                      type='CrossEntropyLoss',
@@ -59,9 +58,12 @@ class RTDETRInsHead(RTDETRHead):
                  **kwargs) -> None:
         self.mask_dims = mask_dims or embed_dims
         self.num_mask_fcs = num_mask_fcs
+        if share_mask_layer is None:
+            share_mask_layer = share_pred_layer
         self.share_mask_layer = share_mask_layer
         self.vfl_iou_type = vfl_iou_type
-        super().__init__(*args, embed_dims=embed_dims, **kwargs)
+        super().__init__(*args, embed_dims=embed_dims,
+                         share_pred_layer=share_pred_layer, **kwargs)
 
         if self.train_cfg:
             self.num_points = self.train_cfg.get('num_points', 12544)
@@ -71,24 +73,6 @@ class RTDETRInsHead(RTDETRHead):
 
         self.loss_mask = MODELS.build(loss_mask)
         self.loss_dice = MODELS.build(loss_dice)
-
-    def _init_layers(self) -> None:
-        """Initialize layers except for backbone, neck and bbox_head."""
-        super()._init_layers()
-        mask_branch = []
-        for _ in range(self.num_mask_fcs):
-            mask_branch.append(Linear(self.embed_dims, self.embed_dims))
-            mask_branch.append(nn.ReLU())
-        mask_branch.append(Linear(self.embed_dims, self.mask_dims))
-        mask_branch = nn.Sequential(*mask_branch)
-
-        if self.share_mask_layer:
-            self.mask_branches = nn.ModuleList(
-                [mask_branch for _ in range(self.num_pred_layer)])
-        else:
-            self.mask_branches = nn.ModuleList([
-                copy.deepcopy(mask_branch) for _ in range(self.num_pred_layer)
-            ])
 
     def feat_to_mask(self, mask_preds: Tensor, mask_feats: Tensor) -> Tensor:
         b, _, h, w = mask_feats.shape
@@ -165,6 +149,281 @@ class RTDETRInsHead(RTDETRHead):
                               batch_img_metas, dn_meta)
         losses = self.loss_by_feat(*loss_inputs)
         return losses
+
+    def predict(self,
+                hidden_states: Tensor,
+                references: List[Tensor],
+                mask_features: Tensor,
+                batch_data_samples: SampleList,
+                rescale: bool = True) -> InstanceList:
+        """Perform forward propagation and loss calculation of the detection
+        head on the queries of the upstream network.
+
+        Args:
+            hidden_states (Tensor): Hidden states output from each decoder
+                layer, has shape (num_decoder_layers, num_queries, bs, dim).
+            references (list[Tensor]): List of the reference from the decoder.
+                The first reference is the `init_reference` (initial) and the
+                other num_decoder_layers(6) references are `inter_references`
+                (intermediate). The `init_reference` has shape (bs,
+                num_queries, 4) when `as_two_stage` of the detector is `True`,
+                otherwise (bs, num_queries, 2). Each `inter_reference` has
+                shape (bs, num_queries, 4) when `with_box_refine` of the
+                detector is `True`, otherwise (bs, num_queries, 2). The
+                coordinates are arranged as (cx, cy) when the last dimension is
+                2, and (cx, cy, w, h) when it is 4.
+            batch_data_samples (list[:obj:`DetDataSample`]): The Data
+                Samples. It usually includes information such as
+                `gt_instance`, `gt_panoptic_seg` and `gt_sem_seg`.
+            rescale (bool, optional): If `True`, return boxes in original
+                image space. Defaults to `True`.
+
+        Returns:
+            list[obj:`InstanceData`]: Detection results of each image
+            after the post process.
+        """
+        batch_img_metas = [
+            data_samples.metainfo for data_samples in batch_data_samples
+        ]
+
+        outs = self(hidden_states, references, mask_features)
+
+        predictions = self.predict_by_feat(
+            *outs, batch_img_metas=batch_img_metas, rescale=rescale)
+        return predictions
+
+    def predict_by_feat(self,
+                        all_layers_cls_scores: Tensor,
+                        all_layers_bbox_preds: Tensor,
+                        all_layers_mask_preds: Tensor,
+                        batch_img_metas: List[Dict],
+                        rescale: bool = False) -> InstanceList:
+        """Transform a batch of output features extracted from the head into
+        bbox results.
+
+        Args:
+            all_layers_cls_scores (Tensor): Classification scores of all
+                decoder layers, has shape (num_decoder_layers, bs, num_queries,
+                cls_out_channels).
+            all_layers_bbox_preds (Tensor): Regression outputs of all decoder
+                layers. Each is a 4D-tensor with normalized coordinate format
+                (cx, cy, w, h) and shape (num_decoder_layers, bs, num_queries,
+                4) with the last dimension arranged as (cx, cy, w, h).
+            batch_img_metas (list[dict]): Meta information of each image.
+            rescale (bool, optional): If `True`, return boxes in original
+                image space. Default `False`.
+
+        Returns:
+            list[obj:`InstanceData`]: Detection results of each image
+            after the post process.
+        """
+        cls_scores = all_layers_cls_scores[-1]
+        bbox_preds = all_layers_bbox_preds[-1]
+        mask_preds = all_layers_mask_preds[-1]
+
+        result_list = []
+        for img_id in range(len(batch_img_metas)):
+            cls_score = cls_scores[img_id]
+            bbox_pred = bbox_preds[img_id]
+            mask_pred = mask_preds[img_id]
+            img_meta = batch_img_metas[img_id]
+            results = self._predict_by_feat_single(cls_score, bbox_pred,
+                                                   mask_pred, img_meta,
+                                                   rescale)
+            result_list.append(results)
+        return result_list
+
+    def _predict_by_feat_single(self,
+                                cls_score: Tensor,
+                                bbox_pred: Tensor,
+                                mask_pred: Tensor,
+                                img_meta: dict,
+                                rescale: bool = True) -> InstanceData:
+        """Transform outputs from the last decoder layer into bbox predictions
+        for each image.
+
+        Args:
+            cls_score (Tensor): Box score logits from the last decoder layer
+                for each image. Shape [num_queries, cls_out_channels].
+            bbox_pred (Tensor): Sigmoid outputs from the last decoder layer
+                for each image, with coordinate format (cx, cy, w, h) and
+                shape [num_queries, 4].
+            img_meta (dict): Image meta info.
+            rescale (bool): If True, return boxes in original image
+                space. Default True.
+
+        Returns:
+            :obj:`InstanceData`: Detection results of each image
+            after the post process.
+            Each item usually contains following keys.
+
+                - scores (Tensor): Classification scores, has a shape
+                  (num_instance, )
+                - labels (Tensor): Labels of bboxes, has a shape
+                  (num_instances, ).
+                - bboxes (Tensor): Has a shape (num_instances, 4),
+                  the last dimension 4 arrange as (x1, y1, x2, y2).
+        """
+        assert len(cls_score) == len(bbox_pred)  # num_queries
+        max_per_img = self.test_cfg.get('max_per_img', len(cls_score))
+        max_per_img = min(max_per_img, len(cls_score))
+        img_shape = img_meta['img_shape']
+        # exclude background
+        if self.loss_cls.use_sigmoid:
+            cls_score = cls_score.sigmoid()
+            scores, indexes = cls_score.view(-1).topk(max_per_img)
+            det_labels = indexes % self.num_classes
+            bbox_index = indexes // self.num_classes
+            bbox_pred = bbox_pred[bbox_index]
+            mask_pred = mask_pred[bbox_index]
+        else:
+            scores, det_labels = F.softmax(cls_score, dim=-1)[..., :-1].max(-1)
+            scores, bbox_index = scores.topk(max_per_img)
+            bbox_pred = bbox_pred[bbox_index]
+            mask_pred = mask_pred[bbox_index]
+            det_labels = det_labels[bbox_index]
+
+        det_bboxes = bbox_cxcywh_to_xyxy(bbox_pred)
+        det_bboxes[:, 0::2] = det_bboxes[:, 0::2] * img_shape[1]
+        det_bboxes[:, 1::2] = det_bboxes[:, 1::2] * img_shape[0]
+        det_bboxes[:, 0::2].clamp_(min=0, max=img_shape[1])
+        det_bboxes[:, 1::2].clamp_(min=0, max=img_shape[0])
+
+        mask_pred = F.interpolate(
+            mask_pred.unsqueeze(1),
+            size=img_shape,
+            mode='bilinear',
+            align_corners=False)
+
+        if rescale:
+            assert img_meta.get('scale_factor') is not None
+            det_bboxes /= det_bboxes.new_tensor(
+                img_meta['scale_factor']).repeat((1, 2))
+            ori_h, ori_w = img_meta['ori_shape'][:2]
+            mask_pred = F.interpolate(
+                mask_pred,
+                size=[
+                    math.ceil(img_shape[0] / img_meta['scale_factor'][1]),
+                    math.ceil(img_shape[1] / img_meta['scale_factor'][0])
+                ],
+                mode='bilinear',
+                align_corners=False)[..., :ori_h, :ori_w]
+
+        masks = mask_pred.squeeze(1)
+        masks = masks.sigmoid() > self.test_cfg.mask_thr_binary
+
+        results = InstanceData()
+        results.bboxes = det_bboxes
+        results.scores = scores
+        results.labels = det_labels
+        results.masks = masks
+
+        score_thr = self.test_cfg.get('score_thr', -1)
+        if score_thr > 0:
+            valid_mask = torch.gt(results.scores, score_thr)
+            if not valid_mask.all():
+                results = results[valid_mask]
+
+        nms_cfg = self.test_cfg.get('nms', None)
+        if nms_cfg is not None:
+            _, keeps = batched_nms(
+                boxes=results.bboxes,
+                scores=results.scores,
+                idxs=results.labels,
+                nms_cfg=nms_cfg)
+            if not keeps.all():
+                results = results[keeps]
+
+        return results
+
+
+@MODELS.register_module()
+class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
+    """RTDETR Head for Instance.
+    """
+
+    def _init_layers(self) -> None:
+        """Initialize layers except for backbone, neck and bbox_head."""
+        super()._init_layers()
+        mask_branch = []
+        for _ in range(self.num_mask_fcs):
+            mask_branch.append(Linear(self.embed_dims, self.embed_dims))
+            mask_branch.append(nn.ReLU())
+        mask_branch.append(Linear(self.embed_dims, self.mask_dims))
+        mask_branch = nn.Sequential(*mask_branch)
+
+        if self.share_mask_layer:
+            self.mask_branches = nn.ModuleList(
+                [mask_branch for _ in range(self.num_pred_layer)])
+        else:
+            self.mask_branches = nn.ModuleList([
+                copy.deepcopy(mask_branch) for _ in range(self.num_pred_layer)
+            ])
+
+    @staticmethod
+    def split_outputs(all_layers_cls_scores: Tensor,
+                      all_layers_bbox_preds: Tensor,
+                      all_layers_mask_preds: Tensor,
+                      dn_meta: Dict[str, int]) -> Tuple[Tensor]:
+        """Split outputs of the denoising part and the matching part.
+
+        For the total outputs of `num_queries_total` length, the former
+        `num_denoising_queries` outputs are from denoising queries, and
+        the rest `num_matching_queries` ones are from matching queries,
+        where `num_queries_total` is the sum of `num_denoising_queries` and
+        `num_matching_queries`.
+
+        Args:
+            all_layers_cls_scores (Tensor): Classification scores of all
+                decoder layers, has shape (num_decoder_layers, bs,
+                num_queries_total, cls_out_channels).
+            all_layers_bbox_preds (Tensor): Regression outputs of all decoder
+                layers. Each is a 4D-tensor with normalized coordinate format
+                (cx, cy, w, h) and has shape (num_decoder_layers, bs,
+                num_queries_total, 4).
+            dn_meta (Dict[str, int]): The dictionary saves information about
+              group collation, including 'num_denoising_queries' and
+              'num_denoising_groups'.
+
+        Returns:
+            Tuple[Tensor]: a tuple containing the following outputs.
+
+            - all_layers_matching_cls_scores (Tensor): Classification scores
+              of all decoder layers in matching part, has shape
+              (num_decoder_layers, bs, num_matching_queries, cls_out_channels).
+            - all_layers_matching_bbox_preds (Tensor): Regression outputs of
+              all decoder layers in matching part. Each is a 4D-tensor with
+              normalized coordinate format (cx, cy, w, h) and has shape
+              (num_decoder_layers, bs, num_matching_queries, 4).
+            - all_layers_denoising_cls_scores (Tensor): Classification scores
+              of all decoder layers in denoising part, has shape
+              (num_decoder_layers, bs, num_denoising_queries,
+              cls_out_channels).
+            - all_layers_denoising_bbox_preds (Tensor): Regression outputs of
+              all decoder layers in denoising part. Each is a 4D-tensor with
+              normalized coordinate format (cx, cy, w, h) and has shape
+              (num_decoder_layers, bs, num_denoising_queries, 4).
+        """
+        if dn_meta is not None:
+            num_denoising_queries = dn_meta['num_denoising_queries']
+            all_layers_denoising_mask_preds = \
+                [o[:, : num_denoising_queries] for o in all_layers_mask_preds]
+            all_layers_matching_mask_preds = \
+                [o[:, num_denoising_queries:] for o in all_layers_mask_preds]
+        else:
+            all_layers_denoising_mask_preds = None
+            all_layers_matching_mask_preds = all_layers_mask_preds
+
+        (all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
+         all_layers_denoising_cls_scores,
+         all_layers_denoising_bbox_preds) = RTDETRHead.split_outputs(
+             all_layers_cls_scores, all_layers_bbox_preds, dn_meta)
+
+        return (all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
+                all_layers_matching_mask_preds,
+                all_layers_denoising_cls_scores,
+                all_layers_denoising_bbox_preds,
+                all_layers_denoising_mask_preds)
 
     def loss_by_feat(
         self,
@@ -909,257 +1168,6 @@ class RTDETRInsHead(RTDETRHead):
 
         return (labels, label_weights, bbox_targets, bbox_weights,
                 mask_targets, mask_weights, pos_inds, neg_inds)
-
-    def predict(self,
-                hidden_states: Tensor,
-                references: List[Tensor],
-                mask_features: Tensor,
-                batch_data_samples: SampleList,
-                rescale: bool = True) -> InstanceList:
-        """Perform forward propagation and loss calculation of the detection
-        head on the queries of the upstream network.
-
-        Args:
-            hidden_states (Tensor): Hidden states output from each decoder
-                layer, has shape (num_decoder_layers, num_queries, bs, dim).
-            references (list[Tensor]): List of the reference from the decoder.
-                The first reference is the `init_reference` (initial) and the
-                other num_decoder_layers(6) references are `inter_references`
-                (intermediate). The `init_reference` has shape (bs,
-                num_queries, 4) when `as_two_stage` of the detector is `True`,
-                otherwise (bs, num_queries, 2). Each `inter_reference` has
-                shape (bs, num_queries, 4) when `with_box_refine` of the
-                detector is `True`, otherwise (bs, num_queries, 2). The
-                coordinates are arranged as (cx, cy) when the last dimension is
-                2, and (cx, cy, w, h) when it is 4.
-            batch_data_samples (list[:obj:`DetDataSample`]): The Data
-                Samples. It usually includes information such as
-                `gt_instance`, `gt_panoptic_seg` and `gt_sem_seg`.
-            rescale (bool, optional): If `True`, return boxes in original
-                image space. Defaults to `True`.
-
-        Returns:
-            list[obj:`InstanceData`]: Detection results of each image
-            after the post process.
-        """
-        batch_img_metas = [
-            data_samples.metainfo for data_samples in batch_data_samples
-        ]
-
-        outs = self(hidden_states, references, mask_features)
-
-        predictions = self.predict_by_feat(
-            *outs, batch_img_metas=batch_img_metas, rescale=rescale)
-        return predictions
-
-    def predict_by_feat(self,
-                        all_layers_cls_scores: Tensor,
-                        all_layers_bbox_preds: Tensor,
-                        all_layers_mask_preds: Tensor,
-                        batch_img_metas: List[Dict],
-                        rescale: bool = False) -> InstanceList:
-        """Transform a batch of output features extracted from the head into
-        bbox results.
-
-        Args:
-            all_layers_cls_scores (Tensor): Classification scores of all
-                decoder layers, has shape (num_decoder_layers, bs, num_queries,
-                cls_out_channels).
-            all_layers_bbox_preds (Tensor): Regression outputs of all decoder
-                layers. Each is a 4D-tensor with normalized coordinate format
-                (cx, cy, w, h) and shape (num_decoder_layers, bs, num_queries,
-                4) with the last dimension arranged as (cx, cy, w, h).
-            batch_img_metas (list[dict]): Meta information of each image.
-            rescale (bool, optional): If `True`, return boxes in original
-                image space. Default `False`.
-
-        Returns:
-            list[obj:`InstanceData`]: Detection results of each image
-            after the post process.
-        """
-        cls_scores = all_layers_cls_scores[-1]
-        bbox_preds = all_layers_bbox_preds[-1]
-        mask_preds = all_layers_mask_preds[-1]
-
-        result_list = []
-        for img_id in range(len(batch_img_metas)):
-            cls_score = cls_scores[img_id]
-            bbox_pred = bbox_preds[img_id]
-            mask_pred = mask_preds[img_id]
-            img_meta = batch_img_metas[img_id]
-            results = self._predict_by_feat_single(cls_score, bbox_pred,
-                                                   mask_pred, img_meta,
-                                                   rescale)
-            result_list.append(results)
-        return result_list
-
-    def _predict_by_feat_single(self,
-                                cls_score: Tensor,
-                                bbox_pred: Tensor,
-                                mask_pred: Tensor,
-                                img_meta: dict,
-                                rescale: bool = True) -> InstanceData:
-        """Transform outputs from the last decoder layer into bbox predictions
-        for each image.
-
-        Args:
-            cls_score (Tensor): Box score logits from the last decoder layer
-                for each image. Shape [num_queries, cls_out_channels].
-            bbox_pred (Tensor): Sigmoid outputs from the last decoder layer
-                for each image, with coordinate format (cx, cy, w, h) and
-                shape [num_queries, 4].
-            img_meta (dict): Image meta info.
-            rescale (bool): If True, return boxes in original image
-                space. Default True.
-
-        Returns:
-            :obj:`InstanceData`: Detection results of each image
-            after the post process.
-            Each item usually contains following keys.
-
-                - scores (Tensor): Classification scores, has a shape
-                  (num_instance, )
-                - labels (Tensor): Labels of bboxes, has a shape
-                  (num_instances, ).
-                - bboxes (Tensor): Has a shape (num_instances, 4),
-                  the last dimension 4 arrange as (x1, y1, x2, y2).
-        """
-        assert len(cls_score) == len(bbox_pred)  # num_queries
-        max_per_img = self.test_cfg.get('max_per_img', len(cls_score))
-        max_per_img = min(max_per_img, len(cls_score))
-        img_shape = img_meta['img_shape']
-        # exclude background
-        if self.loss_cls.use_sigmoid:
-            cls_score = cls_score.sigmoid()
-            scores, indexes = cls_score.view(-1).topk(max_per_img)
-            det_labels = indexes % self.num_classes
-            bbox_index = indexes // self.num_classes
-            bbox_pred = bbox_pred[bbox_index]
-            mask_pred = mask_pred[bbox_index]
-        else:
-            scores, det_labels = F.softmax(cls_score, dim=-1)[..., :-1].max(-1)
-            scores, bbox_index = scores.topk(max_per_img)
-            bbox_pred = bbox_pred[bbox_index]
-            mask_pred = mask_pred[bbox_index]
-            det_labels = det_labels[bbox_index]
-
-        det_bboxes = bbox_cxcywh_to_xyxy(bbox_pred)
-        det_bboxes[:, 0::2] = det_bboxes[:, 0::2] * img_shape[1]
-        det_bboxes[:, 1::2] = det_bboxes[:, 1::2] * img_shape[0]
-        det_bboxes[:, 0::2].clamp_(min=0, max=img_shape[1])
-        det_bboxes[:, 1::2].clamp_(min=0, max=img_shape[0])
-
-        mask_pred = F.interpolate(
-            mask_pred.unsqueeze(1),
-            size=img_shape,
-            mode='bilinear',
-            align_corners=False)
-
-        if rescale:
-            assert img_meta.get('scale_factor') is not None
-            det_bboxes /= det_bboxes.new_tensor(
-                img_meta['scale_factor']).repeat((1, 2))
-            ori_h, ori_w = img_meta['ori_shape'][:2]
-            mask_pred = F.interpolate(
-                mask_pred,
-                size=[
-                    math.ceil(img_shape[0] / img_meta['scale_factor'][1]),
-                    math.ceil(img_shape[1] / img_meta['scale_factor'][0])
-                ],
-                mode='bilinear',
-                align_corners=False)[..., :ori_h, :ori_w]
-
-        masks = mask_pred.squeeze(1)
-        masks = masks.sigmoid() > self.test_cfg.mask_thr_binary
-
-        results = InstanceData()
-        results.bboxes = det_bboxes
-        results.scores = scores
-        results.labels = det_labels
-        results.masks = masks
-
-        score_thr = self.test_cfg.get('score_thr', -1)
-        if score_thr > 0:
-            valid_mask = torch.gt(results.scores, score_thr)
-            if not valid_mask.all():
-                results = results[valid_mask]
-
-        nms_cfg = self.test_cfg.get('nms', None)
-        if nms_cfg is not None:
-            _, keeps = batched_nms(
-                boxes=results.bboxes,
-                scores=results.scores,
-                idxs=results.labels,
-                nms_cfg=nms_cfg)
-            if not keeps.all():
-                results = results[keeps]
-
-        return results
-
-    @staticmethod
-    def split_outputs(all_layers_cls_scores: Tensor,
-                      all_layers_bbox_preds: Tensor,
-                      all_layers_mask_preds: Tensor,
-                      dn_meta: Dict[str, int]) -> Tuple[Tensor]:
-        """Split outputs of the denoising part and the matching part.
-
-        For the total outputs of `num_queries_total` length, the former
-        `num_denoising_queries` outputs are from denoising queries, and
-        the rest `num_matching_queries` ones are from matching queries,
-        where `num_queries_total` is the sum of `num_denoising_queries` and
-        `num_matching_queries`.
-
-        Args:
-            all_layers_cls_scores (Tensor): Classification scores of all
-                decoder layers, has shape (num_decoder_layers, bs,
-                num_queries_total, cls_out_channels).
-            all_layers_bbox_preds (Tensor): Regression outputs of all decoder
-                layers. Each is a 4D-tensor with normalized coordinate format
-                (cx, cy, w, h) and has shape (num_decoder_layers, bs,
-                num_queries_total, 4).
-            dn_meta (Dict[str, int]): The dictionary saves information about
-              group collation, including 'num_denoising_queries' and
-              'num_denoising_groups'.
-
-        Returns:
-            Tuple[Tensor]: a tuple containing the following outputs.
-
-            - all_layers_matching_cls_scores (Tensor): Classification scores
-              of all decoder layers in matching part, has shape
-              (num_decoder_layers, bs, num_matching_queries, cls_out_channels).
-            - all_layers_matching_bbox_preds (Tensor): Regression outputs of
-              all decoder layers in matching part. Each is a 4D-tensor with
-              normalized coordinate format (cx, cy, w, h) and has shape
-              (num_decoder_layers, bs, num_matching_queries, 4).
-            - all_layers_denoising_cls_scores (Tensor): Classification scores
-              of all decoder layers in denoising part, has shape
-              (num_decoder_layers, bs, num_denoising_queries,
-              cls_out_channels).
-            - all_layers_denoising_bbox_preds (Tensor): Regression outputs of
-              all decoder layers in denoising part. Each is a 4D-tensor with
-              normalized coordinate format (cx, cy, w, h) and has shape
-              (num_decoder_layers, bs, num_denoising_queries, 4).
-        """
-        num_denoising_queries = dn_meta['num_denoising_queries']
-        if dn_meta is not None:
-            all_layers_denoising_mask_preds = \
-                [o[:, : num_denoising_queries] for o in all_layers_mask_preds]
-            all_layers_matching_mask_preds = \
-                [o[:, num_denoising_queries:] for o in all_layers_mask_preds]
-        else:
-            all_layers_denoising_mask_preds = None
-            all_layers_matching_mask_preds = all_layers_mask_preds
-
-        (all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
-         all_layers_denoising_cls_scores,
-         all_layers_denoising_bbox_preds) = RTDETRHead.split_outputs(
-             all_layers_cls_scores, all_layers_bbox_preds, dn_meta)
-
-        return (all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
-                all_layers_matching_mask_preds,
-                all_layers_denoising_cls_scores,
-                all_layers_denoising_bbox_preds,
-                all_layers_denoising_mask_preds)
 
 
 def mask_overlaps(masks1: Tensor, masks2: Tensor, eps: float = 1e-6):

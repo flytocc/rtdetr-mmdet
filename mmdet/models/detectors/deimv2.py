@@ -11,6 +11,7 @@ from ..layers.transformer.dfine_layers import (
     LQE, Gate, MultiNumPointsMultiScaleDeformableAttention)
 from .deformable_detr import DeformableDETR, MultiScaleDeformableAttention
 from .deim import DEIMDFINE
+from .rtdetr_ins import RTDETRInsMixup
 
 
 @MODELS.register_module()
@@ -102,3 +103,8 @@ class DEIMV2(DEIMDFINE):
         """
         self.epoch = value
         self._switch_assigner()
+
+
+@MODELS.register_module()
+class DEIMV2Ins(RTDETRInsMixup, DEIMV2):
+    """DEIMV2 for Instance."""

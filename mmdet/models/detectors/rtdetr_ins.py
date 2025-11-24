@@ -18,9 +18,8 @@ from ..layers import DnQueryGenerator
 from .rtdetr import RTDETR
 
 
-@MODELS.register_module()
-class RTDETRIns(RTDETR):
-    """RTDETR for Instance."""
+class RTDETRInsMixup(RTDETR):
+    """Mixup for RTDETR family Instance Model."""
 
     def __init__(self,
                  *args,
@@ -201,6 +200,11 @@ class RTDETRIns(RTDETR):
             dn_meta=dn_meta) if self.training else dict(
                 mask_features=mask_features)
         return decoder_inputs_dict, head_inputs_dict
+
+
+@MODELS.register_module()
+class RTDETRIns(RTDETRInsMixup, RTDETR):
+    """RTDETR for Instance."""
 
 
 @MODELS.register_module()

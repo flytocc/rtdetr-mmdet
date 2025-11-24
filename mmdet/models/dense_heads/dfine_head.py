@@ -1,9 +1,11 @@
 # Copyright (c) OpenMMLab. All rights reserved.
+import copy
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
 from mmcv.cnn import Linear
+from mmcv.ops import point_sample
 from mmengine.structures import InstanceData
 from scipy.optimize import linear_sum_assignment
 from torch import Tensor, nn
@@ -17,8 +19,9 @@ from mmdet.utils import (InstanceList, OptConfigType, OptInstanceList,
 
 from ..layers.transformer.dfine_layers import bbox2distance
 from ..losses import VarifocalLoss
-from ..utils import multi_apply
+from ..utils import get_uncertain_point_coords_with_randomness, multi_apply
 from .rtdetr_head import RTDETRHead
+from .rtdetr_ins_head import RTDETRInsHeadMixup
 
 
 @MODELS.register_module()
@@ -359,7 +362,7 @@ class DFINEHead(RTDETRHead):
             loss_dict[f'd{num_dec_layer}.loss_ddf'] = loss_ddf_i
 
         # loss of initial preds in decoder
-        initial_loss_cls, initial_losses_bbox, initial_losses_iou = \
+        initial_loss_cls, initial_loss_bbox, initial_loss_iou, _, _ = \
             self.loss_by_feat_single(
                 initial_cls_scores, initial_bbox_preds,
                 bbox_corners=None,
@@ -370,14 +373,14 @@ class DFINEHead(RTDETRHead):
                 batch_gt_instances=batch_gt_instances,
                 batch_img_metas=batch_img_metas)
         loss_dict['init_loss_cls'] = initial_loss_cls
-        loss_dict['init_loss_bbox'] = initial_losses_bbox
-        loss_dict['init_loss_iou'] = initial_losses_iou
+        loss_dict['init_loss_bbox'] = initial_loss_bbox
+        loss_dict['init_loss_iou'] = initial_loss_iou
 
         # loss of proposal generated from encode feature map.
         if enc_cls_scores is not None:
             # NOTE The enc_loss calculation of the DINO is
             # different from that of Deformable DETR.
-            enc_loss_cls, enc_losses_bbox, enc_losses_iou = \
+            enc_loss_cls, enc_loss_bbox, enc_loss_iou, _, _ = \
                 self.loss_by_feat_single(
                     enc_cls_scores, enc_bbox_preds,
                     bbox_corners=None,
@@ -388,8 +391,8 @@ class DFINEHead(RTDETRHead):
                     batch_gt_instances=batch_gt_instances,
                     batch_img_metas=batch_img_metas)
             loss_dict['enc_loss_cls'] = enc_loss_cls
-            loss_dict['enc_loss_bbox'] = enc_losses_bbox
-            loss_dict['enc_loss_iou'] = enc_losses_iou
+            loss_dict['enc_loss_bbox'] = enc_loss_bbox
+            loss_dict['enc_loss_iou'] = enc_loss_iou
 
         if all_layers_denoising_cls_scores is not None:
             (initial_dn_cls_scores, *all_layers_denoising_cls_scores
@@ -434,7 +437,7 @@ class DFINEHead(RTDETRHead):
                 loss_dict[f'd{num_dec_layer}.dn_loss_ddf'] = loss_ddf_i
 
             # loss of initial preds in decoder
-            initial_loss_cls, initial_losses_bbox, initial_losses_iou, _, _ = \
+            dn_initial_loss_cls, dn_initial_loss_bbox, dn_initial_loss_iou, _, _ = \
                 self._loss_dn_single(
                     initial_dn_cls_scores, initial_dn_bbox_preds,
                     dn_bbox_corners=None,
@@ -443,9 +446,9 @@ class DFINEHead(RTDETRHead):
                     batch_gt_instances=batch_gt_instances,
                     batch_img_metas=batch_img_metas,
                     dn_meta=dn_meta)
-            loss_dict['dn_init_loss_cls'] = initial_loss_cls
-            loss_dict['dn_init_loss_bbox'] = initial_losses_bbox
-            loss_dict['dn_init_loss_iou'] = initial_losses_iou
+            loss_dict['dn_init_loss_cls'] = dn_initial_loss_cls
+            loss_dict['dn_init_loss_bbox'] = dn_initial_loss_bbox
+            loss_dict['dn_init_loss_iou'] = dn_initial_loss_iou
 
         return loss_dict
 
@@ -590,7 +593,7 @@ class DFINEHead(RTDETRHead):
             bbox_preds, bbox_targets, bbox_weights, avg_factor=bbox_avg_factor)
 
         if bbox_corners is None:
-            return loss_cls, loss_bbox, loss_iou
+            return loss_cls, loss_bbox, loss_iou, None, None
 
         with_fgl_loss = self.fgl_loss_weight is not None
         with_dff_loss = self.loss_ld is not None and teacher is not None
@@ -985,3 +988,680 @@ def unimodal_distribution_focal_loss(pred, label, weight_right, weight_left):
     loss = F.cross_entropy(pred, dis_left, reduction='none') * weight_left \
         + F.cross_entropy(pred, dis_right, reduction='none') * weight_right
     return loss
+
+
+@MODELS.register_module()
+class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
+
+    def _init_layers(self) -> None:
+        """Initialize layers except for backbone, neck and bbox_head."""
+        super()._init_layers()
+        num_wide_layers = self.num_pred_layer - self.eval_idx - 2
+        scaled_dim = int(round(self.layer_scale * self.embed_dims))
+
+        def _gen_mask_branch(embed_dims: int, out_channels: int):
+            mask_branch = []
+            for _ in range(self.num_mask_fcs):
+                mask_branch.append(Linear(embed_dims, embed_dims))
+                mask_branch.append(nn.ReLU())
+            mask_branch.append(Linear(embed_dims, out_channels))
+            return nn.Sequential(*mask_branch)
+
+        mask_branch = _gen_mask_branch(self.embed_dims, self.mask_dims)
+        mask_branches = [
+            copy.deepcopy(mask_branch) if self.share_mask_layer else
+            _gen_mask_branch(self.embed_dims, self.mask_dims)
+            for _ in range(self.num_pred_layer - num_wide_layers - 1)
+        ]
+        mask_branches += [
+            _gen_mask_branch(scaled_dim, self.mask_dims)
+            for _ in range(num_wide_layers)
+        ]
+        mask_branches += [
+            _gen_mask_branch(self.embed_dims, self.mask_dims)
+        ]
+        self.mask_branches = nn.ModuleList(mask_branches)
+
+    @staticmethod
+    def split_outputs(all_layers_cls_scores: Union[List[Tensor], Tensor],
+                      all_layers_bbox_preds: Union[List[Tensor], Tensor],
+                      all_layers_mask_preds: Union[List[Tensor], Tensor],
+                      all_layers_outputs_corners: Union[List[Tensor], Tensor],
+                      dn_meta: Dict[str, int]) -> Tuple[Tensor, ...]:
+        (all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
+         all_layers_denoising_cls_scores,
+         all_layers_denoising_bbox_preds) = RTDETRHead.split_outputs(
+             all_layers_cls_scores, all_layers_bbox_preds, dn_meta)
+
+        if dn_meta is not None:
+            num_denoising_queries = dn_meta['num_denoising_queries']
+            all_layers_denoising_mask_preds = \
+                [o[:, : num_denoising_queries] for o in all_layers_mask_preds]
+            all_layers_denoising_bbox_corners = [
+                o[:, :num_denoising_queries]
+                for o in all_layers_outputs_corners
+            ]
+            all_layers_matching_mask_preds = \
+                [o[:, num_denoising_queries:] for o in all_layers_mask_preds]
+            all_layers_matching_bbox_corners = [
+                o[:, num_denoising_queries:]
+                for o in all_layers_outputs_corners
+            ]
+        else:
+            all_layers_denoising_mask_preds = None
+            all_layers_denoising_bbox_corners = None
+            all_layers_matching_mask_preds = all_layers_mask_preds
+            all_layers_matching_bbox_corners = all_layers_outputs_corners
+        return (all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
+                all_layers_matching_mask_preds,
+                all_layers_matching_bbox_corners,
+                all_layers_denoising_cls_scores,
+                all_layers_denoising_bbox_preds,
+                all_layers_denoising_mask_preds,
+                all_layers_denoising_bbox_corners)
+
+    @torch.no_grad()
+    def _get_match_indices(
+            self, all_layers_matching_cls_scores: List[Tensor],
+            all_layers_matching_bbox_preds: List[Tensor],
+            all_layers_matching_mask_preds: List[Tensor],
+            batch_gt_instances: InstanceList,
+            batch_img_metas: List[dict]) -> List[List[Tuple[Tensor, Tensor]]]:
+        """Get matching indices for all decoder layers."""
+        num_imgs, num_queries, _ = all_layers_matching_cls_scores[0].shape
+        gt_instances = InstanceData.cat(batch_gt_instances)
+        num_target_list = list(map(len, batch_gt_instances))
+
+        # sample points
+        gt_masks = gt_instances.masks
+        num_gts = gt_masks.shape[0]
+        point_coords = torch.rand((1, self.num_points, 2),
+                                  device=gt_masks.device)
+        # shape (num_gts, num_points)
+        gt_points_masks = point_sample(
+            gt_masks.unsqueeze(1).float(), point_coords.repeat(num_gts, 1,
+                                                               1)).squeeze(1)
+        gt_instances.masks = gt_points_masks
+        point_coords = point_coords.repeat(num_imgs * num_queries, 1, 1)
+
+        img_shapes = {
+            tuple(img_meta['img_shape'])
+            for img_meta in batch_img_metas
+        }
+        assert len(img_shapes) == 1, \
+            f'All images must have the same shape, but got {img_shapes}.'
+
+        img_meta = batch_img_metas[0]
+
+        img_h, img_w = img_meta['img_shape']
+        factor = all_layers_matching_bbox_preds[0].new_tensor(
+            [img_w, img_h, img_w, img_h]).unsqueeze(0)
+
+        all_layers_match_indices = []
+        for cls_score, bbox_pred, mask_pred in zip(
+                all_layers_matching_cls_scores,
+                all_layers_matching_bbox_preds,
+                all_layers_matching_mask_preds):
+            if cls_score is None or bbox_pred is None or mask_pred is None:
+                all_layers_match_indices.append(None)
+                continue
+
+            # batched calculate is more efficient
+            cls_score = cls_score.flatten(0, 1)
+            bbox_pred = bbox_pred.flatten(0, 1)
+            mask_pred = mask_pred.flatten(0, 1)
+
+            # convert bbox_pred from xywh, normalized to xyxy, unnormalized
+            bbox_pred = bbox_cxcywh_to_xyxy(bbox_pred)
+            bbox_pred = bbox_pred * factor
+
+            # sample points
+            # shape (num_queries, num_points)
+            mask_points_pred = point_sample(
+                mask_pred.unsqueeze(1), point_coords).squeeze(1)
+
+            pred_instances = InstanceData(
+                scores=cls_score, bboxes=bbox_pred, masks=mask_points_pred)
+
+            total_cost = None
+            for match_cost in self.assigner.match_costs:
+                cost = match_cost(
+                    pred_instances=pred_instances,
+                    gt_instances=gt_instances,
+                    img_meta=img_meta)
+                total_cost = cost if total_cost is None else cost + total_cost
+            total_cost = total_cost.view(num_imgs, num_queries, -1)
+
+            batch_match_indices = []
+            for bid, cost in enumerate(total_cost.split(num_target_list, -1)):
+                row, col = linear_sum_assignment(cost[bid].cpu())
+                batch_match_indices.append(
+                    (torch.from_numpy(row).to(torch.long),
+                     torch.from_numpy(col).to(torch.long)))
+
+            all_layers_match_indices.append(batch_match_indices)
+
+        return all_layers_match_indices
+
+    def loss_by_feat(
+        self,
+        all_layers_cls_scores: Tensor,
+        all_layers_bbox_preds: Tensor,
+        all_layers_bbox_corners: Tensor,
+        all_layers_mask_preds: Tensor,
+        enc_cls_scores: Tensor,
+        enc_bbox_preds: Tensor,
+        enc_mask_preds: Tensor,
+        batch_gt_instances: InstanceList,
+        batch_img_metas: List[dict],
+        dn_meta: Dict[str, int],
+        batch_gt_instances_ignore: OptInstanceList = None
+    ) -> Dict[str, Tensor]:
+        """Loss function.
+
+        Args:
+            all_layers_cls_scores (Tensor): Classification scores of all
+                decoder layers, has shape (num_decoder_layers, bs,
+                num_queries_total, cls_out_channels), where
+                `num_queries_total` is the sum of `num_denoising_queries`
+                and `num_matching_queries`.
+            all_layers_bbox_preds (Tensor): Regression outputs of all decoder
+                layers. Each is a 4D-tensor with normalized coordinate format
+                (cx, cy, w, h) and has shape (num_decoder_layers, bs,
+                num_queries_total, 4).
+            enc_cls_scores (Tensor): The score of each point on encode
+                feature map, has shape (bs, num_feat_points, cls_out_channels).
+            enc_bbox_preds (Tensor): The proposal generate from the encode
+                feature map, has shape (bs, num_feat_points, 4) with the last
+                dimension arranged as (cx, cy, w, h).
+            batch_gt_instances (list[:obj:`InstanceData`]): Batch of
+                gt_instance. It usually includes ``bboxes`` and ``labels``
+                attributes.
+            batch_img_metas (list[dict]): Meta information of each image, e.g.,
+                image size, scaling factor, etc.
+            dn_meta (Dict[str, int]): The dictionary saves information about
+                group collation, including 'num_denoising_queries' and
+                'num_denoising_groups'. It will be used for split outputs of
+                denoising and matching parts and loss calculation.
+            batch_gt_instances_ignore (list[:obj:`InstanceData`], optional):
+                Batch of gt_instances_ignore. It includes ``bboxes`` attribute
+                data that is ignored during training and testing.
+                Defaults to None.
+
+        Returns:
+            dict[str, Tensor]: A dictionary of loss components.
+        """
+        # extract denoising and matching part of outputs
+        (all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
+         all_layers_matching_mask_preds, all_layers_matching_bbox_corners,
+         all_layers_denoising_cls_scores, all_layers_denoising_bbox_preds,
+         all_layers_denoising_mask_preds,
+         all_layers_denoising_bbox_corners) = \
+            self.split_outputs(
+                all_layers_cls_scores, all_layers_bbox_preds,
+                all_layers_mask_preds, all_layers_bbox_corners, dn_meta)
+
+        (*all_layers_match_indices,
+         enc_match_indices) = self._get_match_indices(
+             (*all_layers_matching_cls_scores, enc_cls_scores),
+             (*all_layers_matching_bbox_preds, enc_bbox_preds),
+             (*all_layers_matching_mask_preds, enc_mask_preds),
+             batch_gt_instances=batch_gt_instances,
+             batch_img_metas=batch_img_metas)
+
+        (initial_cls_scores,
+         *all_layers_matching_cls_scores) = all_layers_matching_cls_scores
+        (initial_bbox_preds,
+         *all_layers_matching_bbox_preds) = all_layers_matching_bbox_preds
+        (initial_mask_preds,
+         *all_layers_matching_mask_preds) = all_layers_matching_mask_preds
+        (initial_match_indices,
+         *all_layers_match_indices) = all_layers_match_indices
+
+        if self.use_uni_set:
+            # `_get_merged_match_indices` performs sorting，
+            # be aware that the input order may influence training behavior.
+            all_match_indices = (all_layers_match_indices[-1],
+                                 *all_layers_match_indices[:-1],
+                                 initial_match_indices)
+            if enc_match_indices is not None:
+                all_match_indices = (*all_match_indices, enc_match_indices)
+
+            merged_match_indices = self._get_merged_match_indices(
+                *all_match_indices)
+            device = all_layers_matching_cls_scores[-1].device
+            merged_match_indices = [(pos.to(device), gt.to(device))
+                                    for pos, gt in merged_match_indices]
+        else:
+            merged_match_indices = None
+
+        teacher_scores = all_layers_matching_cls_scores[-1].detach()
+        teacher_corners = all_layers_matching_bbox_corners[-1].detach()
+        teacher = (teacher_scores, teacher_corners)
+        all_layers_teachers = (teacher, ) * (
+            len(all_layers_matching_bbox_corners) - 1) + (None, )
+
+        # initialize cached targets
+        self.cached_bbox_targets = {}
+        self.cached_fgl_targets = None
+        self.cached_dn_targets = None
+        self.cached_dn_fgl_targets = None
+        self.cached_dn_mask_targets = None
+        self.num_pos, self.num_neg = None, None
+
+        (losses_cls, losses_bbox, losses_iou, losses_fgl, losses_ddf,
+         losses_mask, losses_dice) = multi_apply(
+             self.loss_by_feat_single,
+             all_layers_matching_cls_scores,
+             all_layers_matching_bbox_preds,
+             all_layers_matching_mask_preds,
+             all_layers_matching_bbox_corners,
+             all_layers_teachers,
+             all_layers_match_indices,
+             initial_bbox_preds=initial_bbox_preds.detach(),
+             merged_match_indices=merged_match_indices,
+             batch_gt_instances=batch_gt_instances,
+             batch_img_metas=batch_img_metas)
+
+        loss_dict = dict()
+        # loss from the last decoder layer
+        loss_dict['loss_cls'] = losses_cls[-1]
+        loss_dict['loss_bbox'] = losses_bbox[-1]
+        loss_dict['loss_iou'] = losses_iou[-1]
+        loss_dict['loss_fgl'] = losses_fgl[-1]
+        loss_dict['loss_ddf'] = losses_ddf[-1]
+        loss_dict['loss_mask'] = losses_mask[-1]
+        loss_dict['loss_dice'] = losses_dice[-1]
+        # loss from other decoder layers
+        for num_dec_layer, (loss_cls_i, loss_bbox_i, loss_iou_i, loss_fgl_i,
+                            loss_ddf_i, loss_mask_i, loss_dice_i) in \
+                enumerate(zip(losses_cls[:-1], losses_bbox[:-1],
+                              losses_iou[:-1], losses_fgl[:-1],
+                              losses_ddf[:-1], losses_mask[:-1],
+                              losses_dice[:-1])):
+            loss_dict[f'd{num_dec_layer}.loss_cls'] = loss_cls_i
+            loss_dict[f'd{num_dec_layer}.loss_bbox'] = loss_bbox_i
+            loss_dict[f'd{num_dec_layer}.loss_iou'] = loss_iou_i
+            loss_dict[f'd{num_dec_layer}.loss_fgl'] = loss_fgl_i
+            loss_dict[f'd{num_dec_layer}.loss_ddf'] = loss_ddf_i
+            loss_dict[f'd{num_dec_layer}.loss_mask'] = loss_mask_i
+            loss_dict[f'd{num_dec_layer}.loss_dice'] = loss_dice_i
+
+        # loss of initial preds in decoder
+        (initial_loss_cls, initial_loss_bbox, initial_loss_iou, _, _,
+         initial_loss_mask, initial_loss_dice) = self.loss_by_feat_single(
+            initial_cls_scores, initial_bbox_preds, initial_mask_preds,
+            bbox_corners=None,
+            teacher=None,
+            batch_match_indices=initial_match_indices,
+            initial_bbox_preds=None,
+            merged_match_indices=merged_match_indices,
+            batch_gt_instances=batch_gt_instances,
+            batch_img_metas=batch_img_metas)
+        loss_dict['init_loss_cls'] = initial_loss_cls
+        loss_dict['init_loss_bbox'] = initial_loss_bbox
+        loss_dict['init_loss_iou'] = initial_loss_iou
+        loss_dict['init_loss_mask'] = initial_loss_mask
+        loss_dict['init_loss_dice'] = initial_loss_dice
+
+        # loss of proposal generated from encode feature map.
+        if enc_cls_scores is not None:
+            # NOTE The enc_loss calculation of the DINO is
+            # different from that of Deformable DETR.
+            (enc_loss_cls, enc_loss_bbox, enc_loss_iou, _, _,
+             enc_loss_mask, enc_loss_dice) = \
+                self.loss_by_feat_single(
+                    enc_cls_scores, enc_bbox_preds, enc_mask_preds,
+                    bbox_corners=None,
+                    teacher=None,
+                    batch_match_indices=enc_match_indices,
+                    initial_bbox_preds=None,
+                    merged_match_indices=merged_match_indices,
+                    batch_gt_instances=batch_gt_instances,
+                    batch_img_metas=batch_img_metas)
+            loss_dict['enc_loss_cls'] = enc_loss_cls
+            loss_dict['enc_loss_bbox'] = enc_loss_bbox
+            loss_dict['enc_loss_iou'] = enc_loss_iou
+            loss_dict['enc_loss_mask'] = enc_loss_mask
+            loss_dict['enc_loss_dice'] = enc_loss_dice
+
+        if all_layers_denoising_cls_scores is not None:
+            (initial_dn_cls_scores, *all_layers_denoising_cls_scores
+             ) = all_layers_denoising_cls_scores
+            (initial_dn_bbox_preds, *all_layers_denoising_bbox_preds
+             ) = all_layers_denoising_bbox_preds
+            (initial_dn_mask_preds, *all_layers_denoising_mask_preds
+             ) = all_layers_denoising_mask_preds
+
+            dn_teacher_scores = all_layers_denoising_cls_scores[-1].detach()
+            dn_teacher_corners = all_layers_denoising_bbox_corners[-1].detach()
+            dn_teacher = (dn_teacher_scores, dn_teacher_corners)
+            all_layers_denoising_teachers = (dn_teacher, ) * (
+                len(all_layers_denoising_bbox_corners) - 1) + (None, )
+
+            # calculate denoising loss from all decoder layers
+            (dn_losses_cls, dn_losses_bbox, dn_losses_iou, dn_losses_fgl,
+             dn_losses_mask, dn_losses_dice, dn_losses_ddf) = multi_apply(
+                 self._loss_dn_single,
+                 all_layers_denoising_cls_scores,
+                 all_layers_denoising_bbox_preds,
+                 all_layers_denoising_mask_preds,
+                 all_layers_denoising_bbox_corners,
+                 all_layers_denoising_teachers,
+                 initial_dn_bbox_preds=initial_dn_bbox_preds.detach(),
+                 batch_gt_instances=batch_gt_instances,
+                 batch_img_metas=batch_img_metas,
+                 dn_meta=dn_meta)
+
+            # collate denoising loss
+            loss_dict['dn_loss_cls'] = dn_losses_cls[-1]
+            loss_dict['dn_loss_bbox'] = dn_losses_bbox[-1]
+            loss_dict['dn_loss_iou'] = dn_losses_iou[-1]
+            loss_dict['dn_loss_mask'] = dn_losses_mask[-1]
+            loss_dict['dn_loss_dice'] = dn_losses_dice[-1]
+            loss_dict['dn_loss_fgl'] = dn_losses_fgl[-1]
+            loss_dict['dn_loss_ddf'] = dn_losses_ddf[-1]
+            for num_dec_layer, (loss_cls_i, loss_bbox_i, loss_iou_i,
+                                loss_mask_i, loss_dice_i, loss_fgl_i,
+                                loss_ddf_i) in \
+                    enumerate(zip(dn_losses_cls[:-1], dn_losses_bbox[:-1],
+                                  dn_losses_iou[:-1], dn_losses_mask[:-1],
+                                  dn_losses_dice[:-1], dn_losses_fgl[:-1],
+                                  dn_losses_ddf[:-1])):
+                loss_dict[f'd{num_dec_layer}.dn_loss_cls'] = loss_cls_i
+                loss_dict[f'd{num_dec_layer}.dn_loss_bbox'] = loss_bbox_i
+                loss_dict[f'd{num_dec_layer}.dn_loss_iou'] = loss_iou_i
+                loss_dict[f'd{num_dec_layer}.dn_loss_mask'] = loss_mask_i
+                loss_dict[f'd{num_dec_layer}.dn_loss_dice'] = loss_dice_i
+                loss_dict[f'd{num_dec_layer}.dn_loss_fgl'] = loss_fgl_i
+                loss_dict[f'd{num_dec_layer}.dn_loss_ddf'] = loss_ddf_i
+
+            # loss of initial preds in decoder
+            (dn_initial_loss_cls, dn_initial_loss_bbox, dn_initial_loss_iou,
+             _, _,
+             dn_initial_loss_mask, dn_initial_loss_dice) = self._loss_dn_single(
+                 initial_dn_cls_scores, initial_dn_bbox_preds,
+                 initial_dn_mask_preds,
+                 dn_bbox_corners=None,
+                 teacher=None,
+                 initial_dn_bbox_preds=None,
+                 batch_gt_instances=batch_gt_instances,
+                 batch_img_metas=batch_img_metas,
+                 dn_meta=dn_meta)
+            loss_dict['dn_init_loss_cls'] = dn_initial_loss_cls
+            loss_dict['dn_init_loss_bbox'] = dn_initial_loss_bbox
+            loss_dict['dn_init_loss_iou'] = dn_initial_loss_iou
+            loss_dict['dn_init_loss_mask'] = dn_initial_loss_mask
+            loss_dict['dn_init_loss_dice'] = dn_initial_loss_dice
+
+        return loss_dict
+
+    def loss_by_feat_single(self, cls_scores: Tensor, bbox_preds: Tensor,
+                            mask_preds: Tensor,
+                            bbox_corners: Optional[Tensor],
+                            teacher: Optional[Tuple[Tensor, Tensor]],
+                            batch_match_indices: Optional[List[Tuple[Tensor,
+                                                                     Tensor]]],
+                            initial_bbox_preds: Optional[Tensor],
+                            merged_match_indices: List[Tuple[Tensor, Tensor]],
+                            batch_gt_instances: InstanceList,
+                            batch_img_metas: List[dict]) -> Tuple[Tensor]:
+        """Loss function for outputs from a single decoder layer of a single
+        feature level.
+
+        Args:
+            cls_scores (Tensor): Box score logits from a single decoder layer
+                for all images, has shape (bs, num_queries, cls_out_channels).
+            bbox_preds (Tensor): Sigmoid outputs from a single decoder layer
+                for all images, with normalized coordinate (cx, cy, w, h) and
+                shape (bs, num_queries, 4).
+            bbox_corners (Tensor):
+                # TODO
+            teacher (tuple[Tensor, Tensor]):
+                # TODO
+            batch_match_indices (list[tuple[Tensor, Tensor]]):
+                # TODO
+            initial_bbox_preds (Tensor):
+                # TODO
+            merged_match_indices (list[tuple[Tensor, Tensor]]):
+                # TODO
+            batch_gt_instances (list[:obj:`InstanceData`]): Batch of
+                gt_instance. It usually includes ``bboxes`` and ``labels``
+                attributes.
+            batch_img_metas (list[dict]): Meta information of each image, e.g.,
+                image size, scaling factor, etc.
+
+        Returns:
+            Tuple[Tensor]: A tuple including `loss_cls`, `loss_box` and
+            `loss_iou`.
+        """
+        (loss_cls, loss_bbox, loss_iou, loss_fgl,
+         loss_ddf) = super().loss_by_feat_single(
+             cls_scores, bbox_preds, bbox_corners, teacher,
+             batch_match_indices, initial_bbox_preds, merged_match_indices,
+             batch_gt_instances, batch_img_metas)
+
+        num_imgs, num_queries = mask_preds.shape[:2]
+
+        mask_targets_list, mask_weights_list, mask_num_pos_list = multi_apply(
+            self._get_mask_targets_single,
+            batch_match_indices,
+            batch_gt_instances,
+            batch_img_metas,
+            num_queries=num_queries,
+            device=bbox_preds.device)
+        num_total_pos = sum(mask_num_pos_list)
+        num_total_neg = num_imgs * num_queries - num_total_pos
+        mask_targets = torch.cat(mask_targets_list, 0)
+        mask_weights = torch.stack(mask_weights_list, 0)
+
+        # extract positive ones
+        # shape (batch_size, num_queries, h, w) -> (num_total_gts, h, w)
+        mask_preds = mask_preds[mask_weights > 0]
+
+        # construct weighted avg_factor to match with the official DETR repo
+        mask_avg_factor = num_total_pos * 1.0 + \
+            num_total_neg * self.bg_cls_weight
+        if self.sync_cls_avg_factor:
+            mask_avg_factor = reduce_mean(
+                mask_preds.new_tensor([mask_avg_factor]))
+        mask_avg_factor = max(mask_avg_factor, 1)
+
+        with torch.no_grad():
+            points_coords = get_uncertain_point_coords_with_randomness(
+                mask_preds.unsqueeze(1), None, self.num_points,
+                self.oversample_ratio, self.importance_sample_ratio)
+            # shape (num_total_gts, h, w) -> (num_total_gts, num_points)
+            mask_point_targets = point_sample(
+                mask_targets.unsqueeze(1).float(), points_coords).squeeze(1)
+        # shape (num_queries, h, w) -> (num_queries, num_points)
+        mask_point_preds = point_sample(
+            mask_preds.unsqueeze(1), points_coords).squeeze(1)
+
+        # dice loss
+        loss_dice = self.loss_dice(
+            mask_point_preds, mask_point_targets, avg_factor=mask_avg_factor)
+
+        # mask loss
+        # shape (num_queries, num_points) -> (num_queries * num_points, )
+        mask_point_preds = mask_point_preds.reshape(-1)
+        # shape (num_total_gts, num_points) -> (num_total_gts * num_points, )
+        mask_point_targets = mask_point_targets.reshape(-1)
+        loss_mask = self.loss_mask(
+            mask_point_preds,
+            mask_point_targets,
+            avg_factor=mask_avg_factor * self.num_points)
+
+        return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf, loss_dice,
+                loss_mask)
+
+    @torch.no_grad()
+    def _get_mask_targets_single(self, match_indices: Tuple[Tensor, Tensor],
+                                 gt_instances: InstanceData, img_meta: dict,
+                                 num_queries: int,
+                                 device: Union[str, torch.device]) -> tuple:
+        """Compute classification targets for one image.
+
+        Outputs from a single decoder layer of a single feature level are used.
+
+        Args:
+            match_indices (tuple[Tensor, Tensor]):
+                A tuple containing two tensors, the first is the sampled
+                positive indices for each image, and the second is the
+                assigned ground truth indices for each positive sample.
+            gt_instances (:obj:`InstanceData`): Ground truth of instance
+                annotations. It should includes ``bboxes`` and ``labels``
+                attributes.
+            img_meta (dict): Meta information for one image.
+            num_queries (int): The number of queries for the current image.
+            device (str or torch.device): The device of the output tensors.
+
+        Returns:
+            tuple[Tensor]: a tuple containing the following for one image.
+
+            - mask_targets (Tensor): BBox targets of each image.
+            - mask_weights (Tensor]): BBox weights of each image.
+            - num_pos (int): The number of positive samples for the image.
+        """
+        pos_inds, pos_assigned_gt_inds = match_indices
+        gt_masks = gt_instances.masks
+        mask_targets = gt_masks[pos_assigned_gt_inds]
+        mask_weights = torch.zeros(num_queries, device=device)
+        mask_weights[pos_inds] = 1.0
+        return mask_targets, mask_weights, pos_inds.numel()
+
+    def _loss_dn_single(self, dn_cls_scores: Tensor, dn_bbox_preds: Tensor,
+                        dn_mask_preds: Tensor,
+                        dn_bbox_corners: Optional[Tensor],
+                        teacher: Optional[Tuple[Tensor, Tensor]],
+                        initial_dn_bbox_preds: Optional[Tensor],
+                        batch_gt_instances: InstanceList,
+                        batch_img_metas: List[dict],
+                        dn_meta: Dict[str, int]) -> Tuple[Tensor]:
+        """Denoising loss for outputs from a single decoder layer.
+
+        Args:
+            dn_cls_scores (Tensor): Classification scores of a single decoder
+                layer in denoising part, has shape (bs, num_denoising_queries,
+                cls_out_channels).
+            dn_bbox_preds (Tensor): Regression outputs of a single decoder
+                layer in denoising part. Each is a 4D-tensor with normalized
+                coordinate format (cx, cy, w, h) and has shape
+                (bs, num_denoising_queries, 4).
+            dn_bbox_corners (Tensor):
+                # TODO
+            teacher (tuple[Tensor, Tensor]):
+                # TODO
+            initial_dn_bbox_preds (Tensor):
+                # TODO
+            batch_gt_instances (list[:obj:`InstanceData`]): Batch of
+                gt_instance. It usually includes ``bboxes`` and ``labels``
+                attributes.
+            batch_img_metas (list[dict]): Meta information of each image, e.g.,
+                image size, scaling factor, etc.
+            dn_meta (Dict[str, int]): The dictionary saves information about
+              group collation, including 'num_denoising_queries' and
+              'num_denoising_groups'. It will be used for split outputs of
+              denoising and matching parts and loss calculation.
+
+        Returns:
+            Tuple[Tensor]: A tuple including `loss_cls`, `loss_box` and
+            `loss_iou`.
+        """
+        (loss_cls, loss_bbox, loss_iou, loss_fgl,
+         loss_ddf) = super()._loss_dn_single(
+             dn_cls_scores, dn_bbox_preds, dn_bbox_corners, teacher,
+             initial_dn_bbox_preds, batch_gt_instances, batch_img_metas,
+             dn_meta)
+
+        if dn_cls_scores.size(1) == 0:
+            loss_mask = loss_dice = dn_mask_preds.new_tensor(0)
+            return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf,
+                    loss_mask, loss_dice)
+
+        if self.cached_dn_mask_targets is None:
+            (mask_targets_list, mask_weights_list, mask_num_pos_list,
+             mask_num_neg_list) = multi_apply(
+                 self._get_dn_mask_targets_single,
+                 batch_gt_instances,
+                 batch_img_metas,
+                 dn_meta=dn_meta)
+            num_total_pos = sum(mask_num_pos_list)
+            num_total_neg = sum(mask_num_neg_list)
+            mask_targets = torch.cat(mask_targets_list, 0)
+            mask_weights = torch.stack(mask_weights_list, 0)
+
+            # construct weighted avg_factor
+            # to match with the official DETR repo
+            mask_avg_factor = \
+                num_total_pos * 1.0 + num_total_neg * self.bg_cls_weight
+            if self.sync_cls_avg_factor:
+                mask_avg_factor = reduce_mean(
+                    dn_bbox_preds.new_tensor([mask_avg_factor]))
+            mask_avg_factor = max(mask_avg_factor, 1)
+
+            self.cached_dn_mask_targets = (
+                mask_targets, mask_weights, mask_avg_factor)
+        else:
+            # use cached dn targets
+            (mask_targets, mask_weights,
+             mask_avg_factor) = self.cached_dn_mask_targets
+
+        # extract positive ones
+        # shape (batch_size, num_queries, h, w) -> (num_total_gts, h, w)
+        mask_preds = dn_mask_preds[mask_weights > 0]
+
+        with torch.no_grad():
+            points_coords = get_uncertain_point_coords_with_randomness(
+                mask_preds.unsqueeze(1), None, self.num_points,
+                self.oversample_ratio, self.importance_sample_ratio)
+            # shape (num_total_gts, h, w) -> (num_total_gts, num_points)
+            mask_point_targets = point_sample(
+                mask_targets.unsqueeze(1).float(), points_coords).squeeze(1)
+        # shape (num_queries, h, w) -> (num_queries, num_points)
+        mask_point_preds = point_sample(
+            mask_preds.unsqueeze(1), points_coords).squeeze(1)
+
+        # dice loss
+        loss_dice = self.loss_dice(
+            mask_point_preds, mask_point_targets, avg_factor=mask_avg_factor)
+
+        # mask loss
+        # shape (num_queries, num_points) -> (num_queries * num_points, )
+        mask_point_preds = mask_point_preds.reshape(-1)
+        # shape (num_total_gts, num_points) -> (num_total_gts * num_points, )
+        mask_point_targets = mask_point_targets.reshape(-1)
+        loss_mask = self.loss_mask(
+            mask_point_preds,
+            mask_point_targets,
+            avg_factor=mask_avg_factor * self.num_points)
+
+        return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf, loss_mask,
+                loss_dice)
+
+    def _get_dn_mask_targets_single(self, gt_instances: InstanceData,
+                                    img_meta: dict, dn_meta: Dict[str, int]) -> tuple:
+        gt_masks = gt_instances.masks
+        num_groups = dn_meta['num_denoising_groups']
+        num_denoising_queries = dn_meta['num_denoising_queries']
+        num_queries_each_group = int(num_denoising_queries / num_groups)
+        device = gt_masks.device
+
+        if len(gt_masks) > 0:
+            t = torch.arange(len(gt_masks), dtype=torch.long, device=device)
+            t = t.unsqueeze(0).repeat(num_groups, 1)
+            pos_inds = torch.arange(
+                num_groups, dtype=torch.long, device=device)
+            pos_inds = pos_inds.unsqueeze(1) * num_queries_each_group + t
+            pos_inds = pos_inds.flatten()
+        else:
+            pos_inds = gt_masks.new_tensor([], dtype=torch.long)
+
+        neg_inds = pos_inds + num_queries_each_group // 2
+
+        mask_targets = gt_masks.repeat([num_groups, 1, 1])
+        mask_weights = torch.zeros(num_denoising_queries, device=device)
+        mask_weights[pos_inds] = 1.0
+
+        return (mask_targets, mask_weights, pos_inds.numel(),
+                neg_inds.numel())
