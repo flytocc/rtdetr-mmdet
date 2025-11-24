@@ -1,7 +1,7 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import itertools
 from abc import ABCMeta, abstractmethod
-from typing import Sequence, Type, TypeVar
+from typing import Sequence, Type, TypeVar, Union
 
 import cv2
 import mmcv
@@ -542,6 +542,29 @@ class BitmapMasks(BaseInstanceMasks):
                 (2, 0, 1)).astype(self.masks.dtype)
         return BitmapMasks(rotated_masks, *out_shape)
 
+    def project(self,
+                out_shape,
+                homography_matrix: Union[torch.Tensor, np.ndarray],
+                border_value=0,
+                interpolation='bilinear'):
+        """Geometric transformat masks.
+
+        Args:
+            homography_matrix (Tensor or np.ndarray]):
+                Shape (3, 3) for geometric transformation.
+        """
+        if len(self.masks) == 0:
+            projected_masks = np.empty((0, *out_shape), dtype=self.masks.dtype)
+        else:
+            projected_masks = cv2.warpPerspective(
+                self.masks.transpose((1, 2, 0)).astype(np.uint8),
+                homography_matrix,
+                dsize=(out_shape[1], out_shape[0]),
+                borderValue=border_value)
+            rotated_masks = projected_masks.transpose(
+                (2, 0, 1)).astype(self.masks.dtype)
+        return BitmapMasks(projected_masks, *out_shape)
+
     @property
     def areas(self):
         """See :py:attr:`BaseInstanceMasks.areas`."""
@@ -982,6 +1005,70 @@ class PolygonMasks(BaseInstanceMasks):
                 rotated_masks = rotated_masks.crop(
                     np.array([0, 0, out_shape[1], out_shape[0]]))
         return rotated_masks
+
+    def project(self,
+                out_shape,
+                homography_matrix: Union[torch.Tensor, np.ndarray],
+                border_value=0,
+                interpolation='bilinear'):
+        """Geometric transformat masks.
+
+        Args:
+            homography_matrix (Tensor or np.ndarray]):
+                Shape (3, 3) for geometric transformation.
+        """
+        if isinstance(homography_matrix, torch.Tensor):
+            homography_matrix = homography_matrix.cpu().numpy()
+        if len(self.masks) == 0:
+            return PolygonMasks([], *out_shape)
+
+        projected_masks = []
+        for poly_per_obj in self.masks:
+            projected_poly = []
+            for p in poly_per_obj:
+                p = p.copy()
+                coords = np.stack([p[0::2], p[1::2]], axis=1)  # [n, 2]
+                # pad 1 to convert from format [x, y] to homogeneous
+                # coordinates format [x, y, 1]
+                coords = np.concatenate(
+                    (coords, np.ones((coords.shape[0], 1), coords.dtype)),
+                    axis=1)  # [N, 3]
+
+                # Apply the homography matrix.
+                # homography_matrix is (3, 3). coords is (N, 3).
+                # We need (3, 3) @ (3, N) -> (3, N) OR (N, 3) @ (3, 3).
+                # Let's use the standard vector-matrix product:
+                # projected_coords is (N, 3)
+                projected_coords = coords @ homography_matrix.T
+
+                # Handle division by zero (should not typically happen for valid
+                # homographies) and perform perspective division: (x'/w', y'/w')
+
+                # Create a safeguard against division by zero
+                # By convention, if w is near zero, the point is at infinity
+                # (out of the view). We can replace w_prime with 1 where it's
+                # near zero to avoid NaNs, but the point will be heavily
+                # distorted or clipped later. A small epsilon is used to avoid
+                # division by exact zero.
+                w_prime = projected_coords[:, 2:3]
+                w_prime[np.abs(w_prime) < np.finfo(w_prime.dtype).eps] = 1.0
+                projected_coords = projected_coords[:, :2] / w_prime
+
+                if self._simple_clip:
+                    projected_coords[:, 0] = np.clip(projected_coords[:, 0], 0,
+                                                     out_shape[1])
+                    projected_coords[:, 1] = np.clip(projected_coords[:, 1], 0,
+                                                     out_shape[0])
+
+                # Flatten the coordinates back into the original format [x1', y1', x2', y2', ...]
+                projected_poly.append(projected_coords.reshape(-1))
+
+            projected_masks.append(projected_poly)
+        projected_masks = PolygonMasks(projected_masks, *out_shape)
+        if not self._simple_clip:
+            projected_masks = projected_masks.crop(
+                np.array([0, 0, out_shape[1], out_shape[0]]))
+        return projected_masks
 
     def to_bitmap(self):
         """convert polygon masks to bitmap masks."""
