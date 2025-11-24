@@ -334,7 +334,7 @@ class MaskFeatModule_ppdet(BaseModule):
                 self.scale_heads[i](x[i]),
                 size=output.shape[2:],
                 mode='bilinear',
-                align_corners=self.align_corners)
+                align_corners=False)
         output = self.output_conv(output)
         return output
 
