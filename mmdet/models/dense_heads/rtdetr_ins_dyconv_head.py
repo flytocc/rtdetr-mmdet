@@ -7,9 +7,8 @@ from mmdet.registry import MODELS
 from .rtdetr_ins_head import RTDETRInsHead
 
 
-@MODELS.register_module()
-class RTDETRInsDyConvHead(RTDETRInsHead):
-    """RTDETR Head for Instance with Dynamic Convalution.
+class RTDETRInsDyConvHeadMixup:
+    """Instance with Dynamic Convalution.
 
     Args:
         num_prototypes (int): Number of mask prototype features extracted
@@ -93,3 +92,8 @@ class RTDETRInsDyConvHead(RTDETRInsHead):
         for mask_pred, mask_feat in zip(mask_preds, mask_feats):
             masks.append(self.mask_single(mask_pred, mask_feat))
         return torch.stack(masks, dim=0)
+
+
+@MODELS.register_module()
+class RTDETRInsDyConvHead(RTDETRInsDyConvHeadMixup, RTDETRInsHead):
+    """RTDETR Head for Instance with Dynamic Convalution."""

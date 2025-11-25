@@ -16,11 +16,11 @@ from mmdet.structures.bbox import bbox_cxcywh_to_xyxy, bbox_overlaps
 from mmdet.structures.bbox.transforms import bbox_xyxy_to_cxcywh
 from mmdet.utils import (InstanceList, OptConfigType, OptInstanceList,
                          reduce_mean)
-
 from ..layers.transformer.dfine_layers import bbox2distance
 from ..losses import VarifocalLoss
 from ..utils import get_uncertain_point_coords_with_randomness, multi_apply
 from .rtdetr_head import RTDETRHead
+from .rtdetr_ins_dyconv_head import RTDETRInsDyConvHeadMixup
 from .rtdetr_ins_head import RTDETRInsHeadMixup
 
 
@@ -1023,9 +1023,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
             _gen_mask_branch(scaled_dim, self.mask_dims)
             for _ in range(num_wide_layers)
         ]
-        mask_branches += [
-            _gen_mask_branch(self.embed_dims, self.mask_dims)
-        ]
+        mask_branches += [_gen_mask_branch(self.embed_dims, self.mask_dims)]
         self.mask_branches = nn.ModuleList(mask_branches)
 
     @staticmethod
@@ -1105,8 +1103,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
 
         all_layers_match_indices = []
         for cls_score, bbox_pred, mask_pred in zip(
-                all_layers_matching_cls_scores,
-                all_layers_matching_bbox_preds,
+                all_layers_matching_cls_scores, all_layers_matching_bbox_preds,
                 all_layers_matching_mask_preds):
             if cls_score is None or bbox_pred is None or mask_pred is None:
                 all_layers_match_indices.append(None)
@@ -1296,14 +1293,16 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         # loss of initial preds in decoder
         (initial_loss_cls, initial_loss_bbox, initial_loss_iou, _, _,
          initial_loss_mask, initial_loss_dice) = self.loss_by_feat_single(
-            initial_cls_scores, initial_bbox_preds, initial_mask_preds,
-            bbox_corners=None,
-            teacher=None,
-            batch_match_indices=initial_match_indices,
-            initial_bbox_preds=None,
-            merged_match_indices=merged_match_indices,
-            batch_gt_instances=batch_gt_instances,
-            batch_img_metas=batch_img_metas)
+             initial_cls_scores,
+             initial_bbox_preds,
+             initial_mask_preds,
+             bbox_corners=None,
+             teacher=None,
+             batch_match_indices=initial_match_indices,
+             initial_bbox_preds=None,
+             merged_match_indices=merged_match_indices,
+             batch_gt_instances=batch_gt_instances,
+             batch_img_metas=batch_img_metas)
         loss_dict['init_loss_cls'] = initial_loss_cls
         loss_dict['init_loss_bbox'] = initial_loss_bbox
         loss_dict['init_loss_iou'] = initial_loss_iou
@@ -1383,10 +1382,11 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
                 loss_dict[f'd{num_dec_layer}.dn_loss_ddf'] = loss_ddf_i
 
             # loss of initial preds in decoder
-            (dn_initial_loss_cls, dn_initial_loss_bbox, dn_initial_loss_iou,
-             _, _,
-             dn_initial_loss_mask, dn_initial_loss_dice) = self._loss_dn_single(
-                 initial_dn_cls_scores, initial_dn_bbox_preds,
+            (dn_initial_loss_cls, dn_initial_loss_bbox, dn_initial_loss_iou, _,
+             _, dn_initial_loss_mask,
+             dn_initial_loss_dice) = self._loss_dn_single(
+                 initial_dn_cls_scores,
+                 initial_dn_bbox_preds,
                  initial_dn_mask_preds,
                  dn_bbox_corners=None,
                  teacher=None,
@@ -1403,8 +1403,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         return loss_dict
 
     def loss_by_feat_single(self, cls_scores: Tensor, bbox_preds: Tensor,
-                            mask_preds: Tensor,
-                            bbox_corners: Optional[Tensor],
+                            mask_preds: Tensor, bbox_corners: Optional[Tensor],
                             teacher: Optional[Tuple[Tensor, Tensor]],
                             batch_match_indices: Optional[List[Tuple[Tensor,
                                                                      Tensor]]],
@@ -1441,8 +1440,8 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
             Tuple[Tensor]: A tuple including `loss_cls`, `loss_box` and
             `loss_iou`.
         """
-        (loss_cls, loss_bbox, loss_iou, loss_fgl,
-         loss_ddf) = super().loss_by_feat_single(
+        (loss_cls, loss_bbox, loss_iou,
+         loss_fgl, loss_ddf) = super().loss_by_feat_single(
              cls_scores, bbox_preds, bbox_corners, teacher,
              batch_match_indices, initial_bbox_preds, merged_match_indices,
              batch_gt_instances, batch_img_metas)
@@ -1569,10 +1568,11 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
             `loss_iou`.
         """
         (loss_cls, loss_bbox, loss_iou, loss_fgl,
-         loss_ddf) = super()._loss_dn_single(
-             dn_cls_scores, dn_bbox_preds, dn_bbox_corners, teacher,
-             initial_dn_bbox_preds, batch_gt_instances, batch_img_metas,
-             dn_meta)
+         loss_ddf) = super()._loss_dn_single(dn_cls_scores, dn_bbox_preds,
+                                             dn_bbox_corners, teacher,
+                                             initial_dn_bbox_preds,
+                                             batch_gt_instances,
+                                             batch_img_metas, dn_meta)
 
         if dn_cls_scores.size(1) == 0:
             loss_mask = loss_dice = dn_mask_preds.new_tensor(0)
@@ -1596,8 +1596,8 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
             num_total_pos = torch.clamp(
                 reduce_mean(num_total_pos), min=1).item()
 
-            self.cached_dn_mask_targets = (
-                mask_targets, mask_weights, num_total_pos)
+            self.cached_dn_mask_targets = (mask_targets, mask_weights,
+                                           num_total_pos)
         else:
             # use cached dn targets
             (mask_targets, mask_weights,
@@ -1636,7 +1636,8 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
                 loss_dice)
 
     def _get_dn_mask_targets_single(self, gt_instances: InstanceData,
-                                    img_meta: dict, dn_meta: Dict[str, int]) -> tuple:
+                                    img_meta: dict,
+                                    dn_meta: Dict[str, int]) -> tuple:
         gt_masks = gt_instances.masks
         num_groups = dn_meta['num_denoising_groups']
         num_denoising_queries = dn_meta['num_denoising_queries']
@@ -1658,3 +1659,8 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         mask_weights[pos_inds] = 1.0
 
         return mask_targets, mask_weights, pos_inds.numel()
+
+
+@MODELS.register_module()
+class DFINEInsDyConvHead(RTDETRInsDyConvHeadMixup, DFINEInsHead):
+    """DFINE Head for Instance with Dynamic Convalution."""

@@ -4,18 +4,18 @@ _base_ = [
 
 # We use DINOv3-S and S+ as backbone, you can download them following the guide
 # in [DINOv3](https://github.com/facebookresearch/dinov3).
-pretrained = 'dinov3_vits16plus_pretrain_lvd1689m-4057cbaa.pth'
+pretrained = 'dinov3_vits16_pretrain_lvd1689m-08c60483.pth'
 
-base_dim = 256
+base_dim = 224
 mask_dims = base_dim
 num_points = (3, 6, 3)
-num_layers = 6
+num_layers = 4
 reg_max = 32
 reg_scale = 4
 layer_scale = 1.0
 eval_idx = -1
 base_size_repeat = 3
-switch_assigner_epoch = 45
+switch_assigner_epoch = 50
 act_cfg = dict(type='SiLU', inplace=True)
 
 model = dict(
@@ -42,11 +42,11 @@ model = dict(
         pad_size_divisor=1),
     backbone=dict(
         type='DINOv3STAs',
-        name='dinov3_vits16plus',
+        name='dinov3_vits16',
         weights_path=pretrained,
         interaction_indexes=[5, 8, 11],  # only need the [1/8, 1/16, 1/32]
         finetune=True,
-        conv_inplane=64,
+        conv_inplane=32,
         hidden_dim=base_dim),
     neck=None,
     encoder=dict(
@@ -58,8 +58,8 @@ model = dict(
             in_channels=[base_dim, base_dim, base_dim],
             out_channels=base_dim,
             fuse_type='sum',
-            expansion=1.25,
-            num_csp_blocks=4,
+            expansion=1.0,
+            num_csp_blocks=3,
             norm_cfg=dict(type='BN', requires_grad=True)),
         layer_cfg=dict(
             self_attn_cfg=dict(embed_dims=base_dim, num_heads=8, dropout=0.0),
@@ -277,7 +277,7 @@ test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
 # set all norm layers in dinov3 to lr_mult=0.02 and decay_mult=0.0
 # set all other layers in dinov3 to lr_mult=0.02
-backbone_lr_mult = 0.02
+backbone_lr_mult = 0.025
 custom_keys = {
     'in_proj_bias':
     dict(decay_mult=0),
@@ -322,7 +322,7 @@ optim_wrapper = dict(
         bypass_duplicate=True))
 
 # learning policy
-max_epochs = 58
+max_epochs = 68
 train_cfg = dict(
     type='EpochBasedTrainLoop', max_epochs=max_epochs, val_interval=1)
 
@@ -388,8 +388,8 @@ data_preprocessor_stage4 = dict(
     pad_size_divisor=1)
 
 stage2_switch_epoch = 4
-stage3_switch_epoch = 29
-stage4_switch_epoch = 50
+stage3_switch_epoch = 34
+stage4_switch_epoch = 60
 custom_hooks = [
     dict(type='SetEpochInfoHook'),  # for DEIMV2 assigner switch
     dict(
