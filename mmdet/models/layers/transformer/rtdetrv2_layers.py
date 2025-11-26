@@ -1,7 +1,9 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-from typing import Optional
+from typing import Callable, Optional
 
 import torch
+from mmcv.cnn import build_norm_layer
+from mmcv.cnn.bricks.transformer import FFN, MultiheadAttention
 from mmcv.ops import MultiScaleDeformableAttention
 from mmengine.model import ModuleList
 from torch import Tensor, nn
@@ -9,6 +11,7 @@ from torch import Tensor, nn
 from mmdet.models.layers.transformer.deformable_detr_layers import \
     DeformableDetrTransformerDecoderLayer
 from .rtdetr_layers import RTDETRTransformerDecoder
+from .utils import MLP
 
 
 def discrete_grid_sample(
@@ -36,6 +39,17 @@ def discrete_grid_sample(
     return sampling_value
 
 
+class RoundSTE(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, x):
+        return torch.round(x)
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        return grad_output  # pass-through gradient
+
+
 def discrete_grid_sample_grad(
     input: Tensor,
     grid: Tensor,
@@ -43,13 +57,13 @@ def discrete_grid_sample_grad(
 ) -> Tensor:
     h, w = input.shape[-2:]
     scale = torch.tensor([w / 2, h / 2], device=input.device)
-    sampling_coord = ((grid + 1) * scale + 0.5).to(torch.int64)
-    sampling_coord[..., 0] = sampling_coord[..., 0].clamp(0, w - 1)
-    sampling_coord[..., 1] = sampling_coord[..., 1].clamp(0, h - 1)
+    sampling_coord = RoundSTE.apply((grid + 1) * scale)
+    sampling_coord_x = sampling_coord[..., 0].clamp(0, w - 1)
+    sampling_coord_y = sampling_coord[..., 1].clamp(0, h - 1)
+    sampling_coord = torch.stack([sampling_coord_x, sampling_coord_y], dim=-1)
 
     sampling_value = nn.functional.grid_sample(
-        input,
-        (sampling_coord + 0.5) / scale - 1,
+        input, (sampling_coord + 0.5) / scale - 1,
         mode='nearest',
         padding_mode='zeros',
         align_corners=False)
@@ -57,9 +71,11 @@ def discrete_grid_sample_grad(
 
 
 def discrete_sampling_multi_scale_deformable_attn_pytorch(
-        value: torch.Tensor, value_spatial_shapes: torch.Tensor,
+        value: torch.Tensor,
+        value_spatial_shapes: torch.Tensor,
         sampling_locations: torch.Tensor,
-        attention_weights: torch.Tensor) -> torch.Tensor:
+        attention_weights: torch.Tensor,
+        grid_sample_func: Callable = discrete_grid_sample) -> torch.Tensor:
     """discrete sampling version of multi-scale deformable attention.
 
     Args:
@@ -100,7 +116,7 @@ def discrete_sampling_multi_scale_deformable_attn_pytorch(
         sampling_grid_l_ = sampling_grids[:, :, :,
                                           level].transpose(1, 2).flatten(0, 1)
         # bs*num_heads, embed_dims, num_queries, num_points
-        sampling_value_l_ = discrete_grid_sample(
+        sampling_value_l_ = grid_sample_func(
             value_l_,
             sampling_grid_l_,
             mode='nearest',
@@ -122,10 +138,18 @@ class DiscreteSamplingMultiScaleDeformableAttention(
         MultiScaleDeformableAttention):
     """An attention module used in RT-DETR V2."""
 
+    def __init__(self,
+                 *args,
+                 frozen_sampling_offsets: bool = True,
+                 **kwargs) -> None:
+        self.frozen_sampling_offsets = frozen_sampling_offsets
+        super().__init__(*args, **kwargs)
+
     def init_weights(self) -> None:
         super().init_weights()
-        for p in self.sampling_offsets.parameters():
-            p.requires_grad = False
+        if self.frozen_sampling_offsets:
+            for p in self.sampling_offsets.parameters():
+                p.requires_grad = False
 
     def forward(self,
                 query: torch.Tensor,
@@ -219,8 +243,16 @@ class DiscreteSamplingMultiScaleDeformableAttention(
                 f'Last dim of reference_points must be'
                 f' 2 or 4, but get {reference_points.shape[-1]} instead.')
 
+        if self.training and not self.frozen_sampling_offsets:
+            grid_sample_func = discrete_grid_sample_grad
+        else:
+            grid_sample_func = discrete_grid_sample
         output = discrete_sampling_multi_scale_deformable_attn_pytorch(
-            value, spatial_shapes, sampling_locations, attention_weights)
+            value,
+            spatial_shapes,
+            sampling_locations,
+            attention_weights,
+            grid_sample_func=grid_sample_func)
 
         output = self.output_proj(output)
 
@@ -237,9 +269,16 @@ class DiscreteSamplingDeformableDetrTransformerDecoderLayer(
 
     def _init_layers(self) -> None:
         """Initialize self_attn, cross-attn, ffn, and norms."""
-        super()._init_layers()
+        self.self_attn = MultiheadAttention(**self.self_attn_cfg)
         self.cross_attn = DiscreteSamplingMultiScaleDeformableAttention(
             **self.cross_attn_cfg)
+        self.embed_dims = self.self_attn.embed_dims
+        self.ffn = FFN(**self.ffn_cfg)
+        norms_list = [
+            build_norm_layer(self.norm_cfg, self.embed_dims)[1]
+            for _ in range(3)
+        ]
+        self.norms = ModuleList(norms_list)
 
 
 class RTDETRTransformerDecoderV2(RTDETRTransformerDecoder):
@@ -247,8 +286,13 @@ class RTDETRTransformerDecoderV2(RTDETRTransformerDecoder):
 
     def _init_layers(self) -> None:
         """Initialize decoder layers."""
-        super()._init_layers()
         self.layers = ModuleList([
             DiscreteSamplingDeformableDetrTransformerDecoderLayer(
                 **self.layer_cfg) for _ in range(self.num_layers)
         ])
+        self.embed_dims = self.layers[0].embed_dims
+        if self.post_norm_cfg is not None:
+            raise ValueError('There is not post_norm in '
+                             f'{self._get_name()}')
+        self.ref_point_head = MLP(4, self.embed_dims * 2, self.embed_dims, 2)
+        self.norm = nn.Identity()  # without norm
