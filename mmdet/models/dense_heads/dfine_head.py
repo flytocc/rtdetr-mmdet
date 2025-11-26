@@ -185,6 +185,10 @@ class DFINEHead(RTDETRHead):
                     pred_instances=pred_instances,
                     gt_instances=gt_instances,
                     img_meta=img_meta)
+                if not torch.all(torch.isfinite(cost)):
+                    print(f"ALERT: {match_cost.__class__.__name__} produced NaN/Inf values!")
+                    print(f"Cost min: {cost.min()}, max: {cost.max()}")
+                cost.nan_to_num_(nan=1.0).float()
                 total_cost = cost if total_cost is None else cost + total_cost
             total_cost = total_cost.view(num_imgs, num_queries, -1)
 
@@ -1132,6 +1136,10 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
                     pred_instances=pred_instances,
                     gt_instances=gt_instances,
                     img_meta=img_meta)
+                if not torch.all(torch.isfinite(cost)):
+                    print(f"ALERT: {match_cost.__class__.__name__} produced NaN/Inf values!")
+                    print(f"Cost min: {cost.min()}, max: {cost.max()}")
+                cost.nan_to_num_(nan=1.0).float()
                 total_cost = cost if total_cost is None else cost + total_cost
             total_cost = total_cost.view(num_imgs, num_queries, -1)
 

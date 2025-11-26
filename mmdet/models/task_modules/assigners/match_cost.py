@@ -270,7 +270,7 @@ class FocalLossCost(BaseMatchCost):
         Returns:
             torch.Tensor: cls_cost value with weight
         """
-        cls_pred = cls_pred[:, gt_labels].sigmoid()
+        cls_pred = cls_pred[:, gt_labels].sigmoid().float()
         neg_cost = -(1 - cls_pred + self.eps).log() * (
             1 - self.alpha) * cls_pred.pow(self.gamma)
         pos_cost = -(cls_pred + self.eps).log() * self.alpha * (
