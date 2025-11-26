@@ -80,7 +80,7 @@ class RTDETRInsDyConvHeadMixup:
         n_layers = len(weights)
         for i, (weight, bias) in enumerate(zip(weights, biases)):
             # x shape (num_queries, dyconv_channels, h * w)
-            with torch.cuda.amp.autocast(enabled=False):
+            with torch.amp.autocast(device_type='cuda', enabled=False):
                 x = weight @ x + bias
             if i < n_layers - 1:
                 x = F.relu(x)

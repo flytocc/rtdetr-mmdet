@@ -300,7 +300,7 @@ class FocalLossCost(BaseMatchCost):
         pos_cost = -(cls_pred + self.eps).log() * self.alpha * (
             1 - cls_pred).pow(self.gamma)
 
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(device_type='cuda', enabled=False):
             cls_cost = pos_cost @ gt_labels.T + neg_cost @ (1 - gt_labels).T
         return cls_cost / n * self.weight
 
@@ -491,7 +491,7 @@ class CrossEntropyLossCost(BaseMatchCost):
             cls_pred, torch.ones_like(cls_pred), reduction='none')
         neg = F.binary_cross_entropy_with_logits(
             cls_pred, torch.zeros_like(cls_pred), reduction='none')
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(device_type='cuda', enabled=False):
             cls_cost = pos @ gt_labels.T + neg @ (1 - gt_labels).T
         cls_cost = cls_cost / n
 
