@@ -172,7 +172,7 @@ class MultiImageMixDataset:
 
 def flatten_transforms(
     t: Union[Compose, RandomChoice, RandomApply, BaseTransform, Callable]
-) -> Iterable[Union[BaseTransform, Callable]]:
+) -> Iterable:
     """Flatten the transforms to a sequence of `BaseTransform`."""
     if isinstance(t, Compose):
         for sub_t in t.transforms:

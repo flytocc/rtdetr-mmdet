@@ -3,7 +3,7 @@
 # This software may be used and distributed in accordance with
 # the terms of the DINOv3 License Agreement.
 
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 import torch
 from torch import Tensor, nn
@@ -14,8 +14,9 @@ from .attention import CausalSelfAttention, SelfAttention
 from .ffn_layers import Mlp
 from .layer_scale import LayerScale  # , DropPath
 
-torch._dynamo.config.automatic_dynamic_shapes = False
-torch._dynamo.config.accumulated_cache_size_limit = 1024
+if hasattr(torch, '_dynamo'):
+    torch._dynamo.config.automatic_dynamic_shapes = False
+    torch._dynamo.config.accumulated_cache_size_limit = 1024
 
 
 class SelfAttentionBlock(nn.Module):
@@ -68,7 +69,7 @@ class SelfAttentionBlock(nn.Module):
         self.sample_drop_ratio = drop_path
 
     @staticmethod
-    def _maybe_index_rope(rope: tuple[Tensor, Tensor] | None, indices: Tensor) -> tuple[Tensor, Tensor] | None:
+    def _maybe_index_rope(rope: Optional[Tuple[Tensor, Tensor]], indices: Tensor) -> Optional[Tuple[Tensor, Tensor]]:
         if rope is None:
             return None
 
@@ -245,9 +246,9 @@ class CausalSelfAttentionBlock(nn.Module):
 
     def init_weights(
         self,
-        init_attn_std: float | None = None,
-        init_proj_std: float | None = None,
-        init_fc_std: float | None = None,
+        init_attn_std: Optional[float] = None,
+        init_proj_std: Optional[float] = None,
+        init_fc_std: Optional[float] = None,
         factor: float = 1.0,
     ) -> None:
         init_attn_std = init_attn_std or (self.dim**-0.5)

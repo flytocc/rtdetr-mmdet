@@ -4,7 +4,7 @@
 # the terms of the DINOv3 License Agreement.
 
 import math
-from typing import Callable, Tuple, Union
+from typing import Callable, Optional, Tuple, Union
 
 from torch import Tensor, nn
 
@@ -36,7 +36,7 @@ class PatchEmbed(nn.Module):
         patch_size: Union[int, Tuple[int, int]] = 16,
         in_chans: int = 3,
         embed_dim: int = 768,
-        norm_layer: Callable | None = None,
+        norm_layer: Optional[Callable] = None,
         flatten_embedding: bool = True,
     ) -> None:
         super().__init__()

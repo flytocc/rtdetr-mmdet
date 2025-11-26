@@ -4,7 +4,7 @@
 # the terms of the DINOv3 License Agreement.
 
 import math
-from typing import Literal
+from typing import Literal, Optional, Tuple
 
 import numpy as np
 import torch
@@ -19,15 +19,15 @@ class RopePositionEmbedding(nn.Module):
         embed_dim: int,
         *,
         num_heads: int,
-        base: float | None = 100.0,
-        min_period: float | None = None,
-        max_period: float | None = None,
+        base: Optional[float] = 100.0,
+        min_period: Optional[float] = None,
+        max_period: Optional[float] = None,
         normalize_coords: Literal["min", "max", "separate"] = "separate",
-        shift_coords: float | None = None,
-        jitter_coords: float | None = None,
-        rescale_coords: float | None = None,
-        dtype: torch.dtype | None = None,
-        device: torch.device | None = None,
+        shift_coords: Optional[float] = None,
+        jitter_coords: Optional[float] = None,
+        rescale_coords: Optional[float] = None,
+        dtype: Optional[torch.dtype] = None,
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
         assert embed_dim % (4 * num_heads) == 0
@@ -54,7 +54,7 @@ class RopePositionEmbedding(nn.Module):
         )
         self._init_weights()
 
-    def forward(self, *, H: int, W: int) -> tuple[Tensor, Tensor]:
+    def forward(self, *, H: int, W: int) -> Tuple[Tensor, Tensor]:
         device = self.periods.device
         dtype = self.dtype
         dd = {"device": device, "dtype": dtype}

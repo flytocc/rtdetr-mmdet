@@ -323,7 +323,7 @@ class DinoVisionTransformer(nn.Module):
             )
         return output
 
-    def forward_features(self, x: Tensor | List[Tensor], masks: Optional[Tensor] = None) -> List[Dict[str, Tensor]]:
+    def forward_features(self, x: Union[Tensor, List[Tensor]], masks: Optional[Tensor] = None) -> List[Dict[str, Tensor]]:
         if isinstance(x, torch.Tensor):
             return self.forward_features_list([x], [masks])[0]
         else:
@@ -384,7 +384,7 @@ class DinoVisionTransformer(nn.Module):
         elif return_class_token and return_extra_tokens:
             return tuple(zip(outputs, class_tokens, extra_tokens))
 
-    def forward(self, *args, is_training: bool = False, **kwargs) -> List[Dict[str, Tensor]] | Tensor:
+    def forward(self, *args, is_training: bool = False, **kwargs) -> Union[List[Dict[str, Tensor]], Tensor]:
         ret = self.forward_features(*args, **kwargs)
         if is_training:
             return ret

@@ -4,7 +4,7 @@
 # the terms of the DINOv3 License Agreement.
 
 import math
-from typing import List, Tuple
+from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -63,7 +63,7 @@ class SelfAttention(nn.Module):
         self.proj = nn.Linear(dim, dim, bias=proj_bias, device=device)
         self.proj_drop = nn.Dropout(proj_drop)
 
-    def apply_rope(self, q: Tensor, k: Tensor, rope: Tensor | Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tensor]:
+    def apply_rope(self, q: Tensor, k: Tensor, rope: Union[Tensor, Tuple[Tensor, Tensor]]) -> Tuple[Tensor, Tensor]:
         # All operations will use the dtype of rope, the output is cast back to the dtype of q and k
         q_dtype = q.dtype
         k_dtype = k.dtype
@@ -140,7 +140,7 @@ class CausalSelfAttention(nn.Module):
         self.proj_drop = nn.Dropout(proj_drop)
 
     def init_weights(
-        self, init_attn_std: float | None = None, init_proj_std: float | None = None, factor: float = 1.0
+        self, init_attn_std: Optional[float] = None, init_proj_std: Optional[float] = None, factor: float = 1.0
     ) -> None:
         init_attn_std = init_attn_std or (self.dim**-0.5)
         init_proj_std = init_proj_std or init_attn_std * factor
