@@ -711,12 +711,12 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
 
         return loss_cls, loss_bbox, loss_iou, loss_mask, loss_dice
 
-    @torch.no_grad
+    @torch.no_grad()
     def get_targets(self, cls_scores_list: List[Tensor],
                     bbox_preds_list: List[Tensor],
                     mask_preds_list: List[Tensor],
                     batch_gt_instances: InstanceList,
-                    batch_img_metas: List[dict]) -> tuple:
+                    batch_img_metas: List[dict]) -> Tuple:
         """Compute regression and classification targets for a batch image.
 
         Outputs from a single decoder layer of a single feature level are used.
@@ -758,7 +758,7 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
 
     def _get_targets_single(self, cls_score: Tensor, bbox_pred: Tensor,
                             mask_pred: Tensor, gt_instances: InstanceData,
-                            img_meta: dict) -> tuple:
+                            img_meta: dict) -> Tuple:
         """Compute regression and classification targets for one image.
 
         Outputs from a single decoder layer of a single feature level are used.
@@ -1060,10 +1060,10 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
 
         return loss_cls, loss_bbox, loss_iou, loss_mask, loss_dice
 
-    @torch.no_grad
+    @torch.no_grad()
     def get_dn_targets(self, batch_gt_instances: InstanceList,
                        batch_img_metas: dict, dn_meta: Dict[str,
-                                                            int]) -> tuple:
+                                                            int]) -> Tuple:
         """Get targets in denoising part for a batch of images.
 
         Args:
@@ -1102,7 +1102,7 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
 
     def _get_dn_targets_single(self, gt_instances: InstanceData,
                                img_meta: dict, dn_meta: Dict[str,
-                                                             int]) -> tuple:
+                                                             int]) -> Tuple:
         """Get targets in denoising part for one image.
 
         Args:
