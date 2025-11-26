@@ -908,7 +908,7 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                  num_layers: int = 6,
                  remove_cross_attn_value_proj_and_output_proj: bool = True,
                  update_query_pos: bool = True,
-                 with_lqe: bool = False,
+                 with_lqe: bool = True,
                  **kwargs) -> None:
         if eval_idx < 0:
             eval_idx = num_layers + eval_idx
