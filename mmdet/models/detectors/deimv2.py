@@ -11,7 +11,7 @@ from ..layers.transformer.dfine_layers import (
     LQE, Gate, MultiNumPointsMultiScaleDeformableAttention)
 from .deformable_detr import DeformableDETR, MultiScaleDeformableAttention
 from .deim import DEIMDFINE
-from .rtdetr_ins import RTDETRInsMixup
+from .rtdetr_ins import RTDETRInsMixup, RTDETRInsPlusMixup
 
 
 @MODELS.register_module()
@@ -108,3 +108,8 @@ class DEIMV2(DEIMDFINE):
 @MODELS.register_module()
 class DEIMV2Ins(RTDETRInsMixup, DEIMV2):
     """DEIMV2 for Instance."""
+
+
+@MODELS.register_module()
+class DEIMV2InsPlus(RTDETRInsPlusMixup, DEIMV2Ins):
+    """DEIMV2InsPlus with C2"""

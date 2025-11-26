@@ -207,8 +207,7 @@ class RTDETRIns(RTDETRInsMixup, RTDETR):
     """RTDETR for Instance."""
 
 
-@MODELS.register_module()
-class RTDETRInsPlus(RTDETRIns):
+class RTDETRInsPlusMixup:
 
     def __init__(self,
                  *args,
@@ -257,6 +256,11 @@ class RTDETRInsPlus(RTDETRIns):
         encoder_outputs_dict['mask_features'] = self.enc_mask_output(
             mask_features)
         return encoder_outputs_dict
+
+
+@MODELS.register_module()
+class RTDETRInsPlus(RTDETRInsPlusMixup, RTDETRIns):
+    """RTDETRInsPlus with C2"""
 
 
 def mask2bbox_np(masks: Tensor) -> Tensor:
