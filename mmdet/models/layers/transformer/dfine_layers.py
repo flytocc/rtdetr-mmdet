@@ -3,7 +3,7 @@ import math
 import warnings
 from copy import deepcopy
 from functools import lru_cache
-from typing import List, Literal, Optional, Tuple, Union
+from typing import Callable, List, Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -432,9 +432,12 @@ class Gate(BaseModule):
 
 
 def multi_num_points_multi_scale_deformable_attn_pytorch(
-        value: torch.Tensor, value_spatial_shapes: torch.Tensor,
-        sampling_locations: torch.Tensor, attention_weights: torch.Tensor,
-        num_points_list: List[int]) -> torch.Tensor:
+        value: torch.Tensor,
+        value_spatial_shapes: torch.Tensor,
+        sampling_locations: torch.Tensor,
+        attention_weights: torch.Tensor,
+        num_points_list: List[int],
+        grid_sample_func: Callable = F.grid_sample) -> torch.Tensor:
     """CPU version of multi-num_points multi-scale deformable attention.
 
     Args:
@@ -476,7 +479,7 @@ def multi_num_points_multi_scale_deformable_attn_pytorch(
         sampling_grid_l_ = sampling_grids_list[level].transpose(1, 2).flatten(
             0, 1)
         # bs*num_heads, embed_dims, num_queries, num_points
-        sampling_value_l_ = F.grid_sample(
+        sampling_value_l_ = grid_sample_func(
             value_l_,
             sampling_grid_l_,
             mode='bilinear',
