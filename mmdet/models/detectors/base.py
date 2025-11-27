@@ -154,3 +154,11 @@ class BaseDetector(BaseModel, metaclass=ABCMeta):
             data_sample.pred_instances = pred_instances
         samplelist_boxtype2tensor(data_samples)
         return data_samples
+
+    def switch_to_deploy(self):
+        """Switch the model to deploy mode."""
+        for m in self.modules():
+            if m is self:
+                continue
+            if hasattr(m, 'switch_to_deploy'):
+                m.switch_to_deploy()

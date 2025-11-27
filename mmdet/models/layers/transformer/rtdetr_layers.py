@@ -6,6 +6,7 @@ from typing import List, Optional, Tuple, Union
 import numpy as np
 import torch
 from mmcv.cnn import ConvModule, build_norm_layer
+from mmengine.logging import print_log
 from mmengine.model import BaseModule, ModuleList
 from torch import Tensor, nn
 
@@ -225,6 +226,7 @@ class RepVGGBlock(nn.Module):
         """Switch to deploy mode."""
         if hasattr(self, 'rbr_reparam'):
             return
+        print_log('RepVGGBlock switch to deploy mode.')
         kernel, bias = self.get_equivalent_kernel_bias()
         self.rbr_reparam = nn.Conv2d(
             in_channels=self.rbr_dense.conv.in_channels,
