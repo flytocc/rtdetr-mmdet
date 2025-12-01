@@ -1,9 +1,8 @@
 _base_ = './rtdetrv2_r34vd_8xb2-120e_coco.py'
+load_from = 'https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r34vd_8xb2-120e_coco_bfca80f4.pth'  # noqa
 
-pretrained = 'https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r34vd_8xb2-120e_coco_bfca80f4.pth'  # noqa
 model = dict(
     type='RTDETRV2',
-    init_cfg=dict(type='Pretrained', checkpoint=pretrained),
     decoder=dict(
         layer_cfg=dict(cross_attn_cfg=dict(frozen_sampling_offsets=True))))
 
