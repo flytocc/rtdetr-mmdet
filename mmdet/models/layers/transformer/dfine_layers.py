@@ -961,6 +961,7 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                              f'{self._get_name()}')
 
         self.ref_point_head = MLP(4, self.embed_dims * 2, self.embed_dims, 2)
+        self.norm = nn.Identity()  # without norm
 
         self.integral = Integral(self.reg_max, self.reg_scale)
         if self.with_lqe:

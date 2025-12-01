@@ -239,7 +239,11 @@ train_pipeline_stage4 = train_pipeline
 test_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
     dict(type='Resize', scale=(640, 640), keep_ratio=False),
-    dict(type='LoadAnnotations', with_bbox=True),
+    dict(
+        type='LoadAnnotations',
+        with_bbox=True,
+        with_mask=True,
+        poly2mask=False),
     dict(
         type='PackDetInputs',
         meta_keys=('img_id', 'img_path', 'ori_shape', 'img_shape',

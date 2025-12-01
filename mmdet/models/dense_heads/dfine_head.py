@@ -1089,6 +1089,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         gt_points_masks = point_sample(
             gt_masks.unsqueeze(1).float(), point_coords.repeat(num_gts, 1,
                                                                1)).squeeze(1)
+        gt_instances = gt_instances.clone()
         gt_instances.masks = gt_points_masks
         point_coords = point_coords.repeat(num_imgs * num_queries, 1, 1)
 
