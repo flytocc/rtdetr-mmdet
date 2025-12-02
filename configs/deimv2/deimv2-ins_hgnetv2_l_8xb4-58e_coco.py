@@ -1,21 +1,18 @@
 _base_ = [
     '../_base_/datasets/coco_instance.py', '../_base_/default_runtime.py'
 ]
+pretrained = 'https://github.com/Peterande/storage/releases/download/dfinev1.0/PPHGNetV2_B4_stage1.pth'  # noqa
 
-# We use DINOv3-S and S+ as backbone, you can download them following the guide
-# in [DINOv3](https://github.com/facebookresearch/dinov3).
-pretrained = 'dinov3_vits16_pretrain_lvd1689m-08c60483.pth'
-
-base_dim = 224
+base_dim = 256
 mask_dims = base_dim
 num_points = (3, 6, 3)
-num_layers = 4
+num_layers = 6
 reg_max = 32
 reg_scale = 4
 layer_scale = 1.0
 eval_idx = -1
-base_size_repeat = 3
-switch_assigner_epoch = 50
+base_size_repeat = 4
+switch_assigner_epoch = 45
 act_cfg = dict(type='SiLU', inplace=True)
 
 model = dict(
@@ -36,30 +33,34 @@ model = dict(
                 random_sizes=[480, 512, 544, 576, 608] +
                 [640] * base_size_repeat + [672, 704, 736, 768, 800])
         ],
-        mean=[123.675, 116.28, 103.53],
-        std=[58.395, 57.12, 57.375],
+        mean=[0, 0, 0],
+        std=[255, 255, 255],
         bgr_to_rgb=True,
         pad_size_divisor=1),
     backbone=dict(
-        type='DINOv3STAs',
-        name='dinov3_vits16',
-        weights_path=pretrained,
-        interaction_indexes=[5, 8, 11],  # only need the [1/8, 1/16, 1/32]
-        finetune=True,
-        conv_inplane=32,
-        hidden_dim=base_dim),
-    neck=None,
+        type='HGNetV2',
+        name='B4',
+        return_idx=[1, 2, 3],
+        freeze_at=0,
+        freeze_norm=True,
+        use_lab=False,
+        init_cfg=dict(type='Pretrained', checkpoint=pretrained)),
+    neck=dict(
+        type='ChannelMapper',
+        in_channels=[512, 1024, 2048],
+        kernel_size=1,
+        out_channels=base_dim,
+        act_cfg=None,
+        norm_cfg=dict(type='BN', requires_grad=True)),  # GN for DINO
     encoder=dict(
         use_encoder_idx=[-1],
         num_encoder_layers=1,
         in_channels=[base_dim, base_dim, base_dim],
         fpn_cfg=dict(
-            type='DEIMV2FPN',
+            type='DFINEFPN',
             in_channels=[base_dim, base_dim, base_dim],
             out_channels=base_dim,
-            fuse_type='sum',
             expansion=1.0,
-            num_csp_blocks=3,
             norm_cfg=dict(type='BN', requires_grad=True)),
         layer_cfg=dict(
             self_attn_cfg=dict(embed_dims=base_dim, num_heads=8, dropout=0.0),
@@ -101,7 +102,6 @@ model = dict(
         reg_act_cfg=act_cfg,
         eval_idx=eval_idx,
         mask_dims=mask_dims,
-        embed_dims=base_dim,
         num_classes=80,
         sync_cls_avg_factor=True,
         loss_cls=dict(
@@ -280,54 +280,18 @@ val_dataloader = dict(
     batch_size=4, num_workers=4, dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
-# set all norm layers in dinov3 to lr_mult=0.02 and decay_mult=0.0
-# set all other layers in dinov3 to lr_mult=0.02
-backbone_lr_mult = 0.025
-custom_keys = {
-    'in_proj_bias':
-    dict(decay_mult=0),
-    'backbone.dinov3':
-    dict(lr_mult=backbone_lr_mult),
-    'backbone.dinov3.norm.weight':
-    dict(lr_mult=backbone_lr_mult, decay_mult=0),
-    'backbone.dinov3.norm.bias':
-    dict(lr_mult=backbone_lr_mult, decay_mult=0),
-    'backbone.dinov3.patch_embed.proj.bias':
-    dict(lr_mult=backbone_lr_mult, decay_mult=0),
-    # TODO the following norm layers' weight will apply weight decay
-    # 'backbone.norms': dict(decay_mult=1),
-    # 'backbone.sta.stem.1.weight': dict(decay_mult=1),
-    # 'backbone.sta.conv2.1.weight': dict(decay_mult=1),
-    # 'backbone.sta.conv3.2.weight': dict(decay_mult=1),
-    # 'backbone.sta.conv4.2.weight': dict(decay_mult=1),
-}
-custom_keys.update({
-    f'backbone.dinov3.blocks.{bid}.{name}':
-    dict(lr_mult=backbone_lr_mult, decay_mult=0)
-    for name in [
-        'norm1.weight', 'norm1.bias', 'norm2.weight', 'norm2.bias',
-        'attn.qkv.bias', 'attn.qkv.bias_mask', 'attn.proj.bias',
-        'mlp.fc1.bias', 'mlp.fc2.bias'
-    ] for bid in range(12)
-})
-custom_keys.update({
-    f'decoder.layers.{lid}.norms.{i}.scale': dict(decay_mult=0)
-    for lid in range(num_layers) for i in range(3)
-})
-
 # optimizer
 optim_wrapper = dict(
     type='OptimWrapper',
     optimizer=dict(type='AdamW', lr=0.0005, weight_decay=0.000125),
     clip_grad=dict(max_norm=0.1, norm_type=2),
     paramwise_cfg=dict(
-        custom_keys=custom_keys,
+        custom_keys={'backbone': dict(lr_mult=0.05)},
         norm_decay_mult=0,
-        bias_decay_mult=0,
         bypass_duplicate=True))
 
 # learning policy
-max_epochs = 68
+max_epochs = 58
 train_cfg = dict(
     type='EpochBasedTrainLoop', max_epochs=max_epochs, val_interval=1)
 
@@ -359,8 +323,8 @@ data_preprocessor_stage2 = dict(
             random_sizes=[480, 512, 544, 576, 608] + [640] * base_size_repeat +
             [672, 704, 736, 768, 800])
     ],
-    mean=[123.675, 116.28, 103.53],
-    std=[58.395, 57.12, 57.375],
+    mean=[0, 0, 0],
+    std=[255, 255, 255],
     bgr_to_rgb=True,
     pad_size_divisor=1)
 data_preprocessor_stage3 = dict(
@@ -381,20 +345,20 @@ data_preprocessor_stage3 = dict(
             random_sizes=[480, 512, 544, 576, 608] + [640] * base_size_repeat +
             [672, 704, 736, 768, 800])
     ],
-    mean=[123.675, 116.28, 103.53],
-    std=[58.395, 57.12, 57.375],
+    mean=[0, 0, 0],
+    std=[255, 255, 255],
     bgr_to_rgb=True,
     pad_size_divisor=1)
 data_preprocessor_stage4 = dict(
     type='DetDataPreprocessor',
-    mean=[123.675, 116.28, 103.53],
-    std=[58.395, 57.12, 57.375],
+    mean=[0, 0, 0],
+    std=[255, 255, 255],
     bgr_to_rgb=True,
     pad_size_divisor=1)
 
 stage2_switch_epoch = 4
-stage3_switch_epoch = 34
-stage4_switch_epoch = 60
+stage3_switch_epoch = 29
+stage4_switch_epoch = 50
 custom_hooks = [
     dict(type='SetEpochInfoHook'),  # for DEIMV2 assigner switch
     dict(

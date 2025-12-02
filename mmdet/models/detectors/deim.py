@@ -8,6 +8,7 @@ from mmdet.utils import OptConfigType
 from ..layers import MLP
 from .dfine import DFINE, LQE
 from .rtdetr import RTDETR
+from .rtdetr_ins import RTDETRInsMixup
 
 
 class DEIMMixin:
@@ -69,3 +70,8 @@ class DEIMDFINE(DEIMMixin, DFINE):
 @MODELS.register_module()
 class DEIMRTDETR(DEIMMixin, RTDETR):
     """RTDETR for DEIM."""
+
+
+@MODELS.register_module()
+class DEIMDFINEIns(RTDETRInsMixup, DEIMDFINE):
+    """DEIMDFINE for Instance."""

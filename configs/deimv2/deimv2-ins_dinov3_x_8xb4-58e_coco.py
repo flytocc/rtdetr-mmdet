@@ -109,7 +109,7 @@ model = dict(
             alpha=1.0,
             gamma=1.5,
             iou_weighted=True,
-            loss_weight=4.0),  # 1.0 in RTDETR
+            loss_weight=2.0),  # 1.0 in RTDETR
         loss_bbox=dict(type='L1Loss', loss_weight=5.0),
         loss_iou=dict(type='GIoULoss', loss_weight=2.0),
         loss_ld=dict(

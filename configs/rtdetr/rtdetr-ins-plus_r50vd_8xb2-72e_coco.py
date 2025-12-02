@@ -26,7 +26,7 @@ model = dict(
     ],
     bbox_head=dict(
         mask_dims=mask_dims,
-        loss_cls=dict(loss_weight=4.0)),  # 1.0 in RTDETR
+        loss_cls=dict(loss_weight=2.0)),  # 1.0 in RTDETR
     mask_feat_cfg=dict(
         in_channels=256,
         feat_channels=64,
