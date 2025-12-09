@@ -995,25 +995,26 @@ class BatchCopyBlend(nn.Module):
             for i, ds in enumerate(data_samples)
         ])
 
-        # Get all mask objects and flatten them into a list
-        all_masks: List[Union[BitmapMasks, PolygonMasks]] = []
-        for ds in data_samples:
-            for i in range(len(ds.gt_instances.masks)):
-                all_masks.append(ds.gt_instances.masks[i])
-
-        # Filter masks and other data using the 'keep' mask
-        # Note: Bboxes and labels are filtered directly. 
-        # For masks, we need to convert the boolean tensor 'keep' to a list of indices
-        # to select from the 'all_masks' list.
-        keep_indices = torch.nonzero(keep, as_tuple=True)[0].cpu().tolist()
-        kept_masks = [all_masks[idx] for idx in keep_indices]
-
         # Prepare the objects pool
         objects_pool = defaultdict(list)
         objects_pool['boxes'] = bboxes[keep].round().long().tolist()
         objects_pool['image_idx'] = image_idx[keep.cpu()].tolist()
         objects_pool['labels'] = labels[keep]
-        objects_pool['masks'] = kept_masks
+
+        # Get all mask objects and flatten them into a list
+        if 'masks' in data_samples[0].gt_instances:
+            all_masks: List[Union[BitmapMasks, PolygonMasks]] = []
+            for ds in data_samples:
+                for i in range(len(ds.gt_instances.masks)):
+                    all_masks.append(ds.gt_instances.masks[i])
+
+            # Filter masks and other data using the 'keep' mask
+            # Note: Bboxes and labels are filtered directly. 
+            # For masks, we need to convert the boolean tensor 'keep' to a list of indices
+            # to select from the 'all_masks' list.
+            keep_indices = torch.nonzero(keep, as_tuple=True)[0].cpu().tolist()
+            kept_masks = [all_masks[idx] for idx in keep_indices]
+            objects_pool['masks'] = kept_masks
 
         # Generate mixup ratio
         beta = round(random.uniform(*self.ratio_range), 6)
@@ -1042,7 +1043,6 @@ class BatchCopyBlend(nn.Module):
                 box = objects_pool['boxes'][idx]
                 label = objects_pool['labels'][idx]
                 source_idx = objects_pool['image_idx'][idx]
-                source_mask = objects_pool['masks'][idx]
 
                 # calculate source object size and position
                 x1_src, y1_src, x2_src, y2_src = box
@@ -1072,25 +1072,28 @@ class BatchCopyBlend(nn.Module):
                 dx = x1 - x1_src
                 dy = y1 - y1_src
 
-                # --- MASK GEOMETRIC TRANSFORMATION ---
-                # 1. Translate the mask to the new position (x1, y1) in the target image 'i'
-                # The total translation is (x1 - x1_src, y1 - y1_src).
-                translated_mask = source_mask.translate(
-                    out_shape=(img_height, img_width), 
-                    offset=dx, 
-                    direction='horizontal'
-                )
-                translated_mask = translated_mask.translate(
-                    out_shape=(img_height, img_width), 
-                    offset=dy, 
-                    direction='vertical'
-                )
-                # translated_mask is now positioned at (x1, y1) in the target image coordinates.
-
                 # 2. Add to blend list - use original unexpanded box
                 blend_boxes.append(torch.tensor([x1, y1, x2, y2]))
                 blend_labels.append(label)
-                blend_masks.append(translated_mask) 
+
+                # --- MASK GEOMETRIC TRANSFORMATION ---
+                if 'masks' in objects_pool:
+                    source_mask = objects_pool['masks'][idx]
+
+                    # 1. Translate the mask to the new position (x1, y1) in the target image 'i'
+                    # The total translation is (x1 - x1_src, y1 - y1_src).
+                    translated_mask = source_mask.translate(
+                        out_shape=(img_height, img_width), 
+                        offset=dx, 
+                        direction='horizontal'
+                    )
+                    translated_mask = translated_mask.translate(
+                        out_shape=(img_height, img_width), 
+                        offset=dy, 
+                        direction='vertical'
+                    )
+                    # translated_mask is now positioned at (x1, y1) in the target image coordinates.
+                    blend_masks.append(translated_mask) 
 
                 # handle expanded area (This logic affects both image patch and mask)
                 if self.with_expand:
@@ -1142,13 +1145,12 @@ class BatchCopyBlend(nn.Module):
                 blend_labels = torch.stack(blend_labels)
 
                 # update targets
+                blend_instance_data = InstanceData(
+                    bboxes=blend_boxes, labels=blend_labels)
+                if 'masks' in objects_pool:
+                    blend_instance_data.masks = blend_masks[0].cat(blend_masks)
                 updated_targets[i].gt_instances = InstanceData.cat([
-                    updated_targets[i].gt_instances,
-                    InstanceData(
-                        bboxes=blend_boxes, 
-                        labels=blend_labels, 
-                        masks=blend_masks[0].cat(blend_masks),
-                    )
+                    updated_targets[i].gt_instances, blend_instance_data
                 ])
                 assert 'proposals' not in data_samples[i]
                 assert 'gt_seg_map' not in data_samples[i]
