@@ -448,12 +448,13 @@ class BitmapMasks(BaseInstanceMasks):
             translated_masks = np.empty((0, *out_shape), dtype=bool)
         else:
             masks = self.masks
-            if masks.shape[-2:] != out_shape:
-                empty_masks = np.zeros((masks.shape[0], *out_shape),
+            n, h, w = masks.shape
+            out_h, out_w = out_shape
+            if out_h > h or out_w > w:
+                # expand masks to avoid cropping during translation
+                empty_masks = np.zeros((n, max(out_h, h), max(out_w, w)),
                                        dtype=masks.dtype)
-                min_h = min(out_shape[0], masks.shape[1])
-                min_w = min(out_shape[1], masks.shape[2])
-                empty_masks[:, :min_h, :min_w] = masks[:, :min_h, :min_w]
+                empty_masks[:, :h, :w] = masks
                 masks = empty_masks
             translated_masks = mmcv.imtranslate(
                 masks.transpose((1, 2, 0)),
@@ -461,6 +462,9 @@ class BitmapMasks(BaseInstanceMasks):
                 direction,
                 border_value=border_value,
                 interpolation=interpolation)
+            if masks.shape[-2:] != out_shape:
+                translated_masks = translated_masks[
+                    :out_shape[0], :out_shape[1]]
             if translated_masks.ndim == 2:
                 translated_masks = translated_masks[:, :, None]
             translated_masks = translated_masks.transpose(

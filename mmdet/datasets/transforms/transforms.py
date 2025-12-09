@@ -2525,11 +2525,9 @@ class Mosaic(BaseTransform):
                 gt_masks_i = results_patch['gt_masks']
                 gt_masks_i = gt_masks_i.resize(img_i.shape[:2])
                 gt_masks_i = gt_masks_i.translate(
-                    img_i.shape[:2], padw, direction='horizontal')
+                    mosaic_img.shape[:2], padw, direction='horizontal')
                 gt_masks_i = gt_masks_i.translate(
-                    img_i.shape[:2], padh, direction='vertical')
-                gt_masks_i = gt_masks_i.pad(
-                    [self.img_scale[1], self.img_scale[0]])
+                    mosaic_img.shape[:2], padh, direction='vertical')
                 mosaic_masks.append(gt_masks_i)
 
         mosaic_bboxes = mosaic_bboxes[0].cat(mosaic_bboxes, 0)
