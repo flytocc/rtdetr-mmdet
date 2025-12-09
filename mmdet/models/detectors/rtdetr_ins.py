@@ -142,11 +142,6 @@ class RTDETRInsMixup:
 
         query = torch.gather(output_memory, 1,
                              topk_indices.unsqueeze(-1).repeat(1, 1, c))
-        topk_output_proposals = torch.gather(
-            output_proposals, 1,
-            topk_indices.unsqueeze(-1).repeat(1, 1, 4))
-        topk_coords_unact_ori = self.bbox_head.reg_branches[
-            self.decoder.num_layers](query) + topk_output_proposals
 
         # for mask
         enc_mask_feat = self.bbox_head.mask_branches[
@@ -159,7 +154,11 @@ class RTDETRInsMixup:
         factor = topk_mask.new_tensor([w, h, w, h]).unsqueeze(0)
         # mask to box is a non-differentiable operation
         masks = topk_mask.detach().reshape(-1, h, w) > 0
-        topk_coords_xyxy = mask2bbox_np(masks).reshape(bs, -1, 4)
+        if torch.onnx.is_in_onnx_export():
+            from mmdet.structures.mask import mask2bbox
+            topk_coords_xyxy = mask2bbox(masks).reshape(bs, -1, 4)
+        else:
+            topk_coords_xyxy = mask2bbox_np(masks).reshape(bs, -1, 4)
         topk_coords_normalized = bbox_xyxy_to_cxcywh(topk_coords_xyxy) / factor
         topk_coords_unact = inverse_sigmoid(topk_coords_normalized)
 
@@ -167,6 +166,11 @@ class RTDETRInsMixup:
             topk_score = torch.gather(
                 enc_outputs_class, 1,
                 topk_indices.unsqueeze(-1).repeat(1, 1, cls_out_features))
+            topk_output_proposals = torch.gather(
+                output_proposals, 1,
+                topk_indices.unsqueeze(-1).repeat(1, 1, 4))
+            topk_coords_unact_ori = self.bbox_head.reg_branches[
+                self.decoder.num_layers](query) + topk_output_proposals
             topk_coords = topk_coords_unact_ori.sigmoid()
 
             dn_label_query, dn_bbox_query, dn_mask, dn_meta = \

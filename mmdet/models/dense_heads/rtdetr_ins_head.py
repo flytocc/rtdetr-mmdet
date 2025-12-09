@@ -310,7 +310,7 @@ class RTDETRInsHeadMixup:
                 align_corners=False)[..., :ori_h, :ori_w]
 
         masks = mask_pred.squeeze(1)
-        masks = masks.sigmoid() > self.test_cfg.mask_thr_binary
+        masks = masks.sigmoid() > self.test_cfg.get('mask_thr_binary', 0.5)
 
         results = InstanceData()
         results.bboxes = det_bboxes
