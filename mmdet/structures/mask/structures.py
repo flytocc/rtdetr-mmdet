@@ -194,6 +194,21 @@ class BaseInstanceMasks(metaclass=ABCMeta):
             Rotated masks.
         """
 
+    def project(self,
+                out_shape,
+                homography_matrix: Union[torch.Tensor, np.ndarray],
+                border_value=0,
+                interpolation='bilinear'):
+        """Geometric transformat masks.
+
+        Args:
+            out_shape (tuple[int]): Shape for output mask, format (h, w).
+            homography_matrix (Tensor or np.ndarray]):
+                Shape (3, 3) for geometric transformation.
+            border_value (int | float): Border value. Default 0 for masks.
+            interpolation (str): See :func:`mmcv.imresize`.
+        """
+
     def get_bboxes(self, dst_type='hbb'):
         """Get the certain type boxes from masks.
 
@@ -564,8 +579,9 @@ class BitmapMasks(BaseInstanceMasks):
                 self.masks.transpose((1, 2, 0)).astype(np.uint8),
                 homography_matrix,
                 dsize=(out_shape[1], out_shape[0]),
+                flags=mmcv.image.geometric.cv2_interp_codes[interpolation],
                 borderValue=border_value)
-            rotated_masks = projected_masks.transpose(
+            projected_masks = projected_masks.transpose(
                 (2, 0, 1)).astype(self.masks.dtype)
         return BitmapMasks(projected_masks, *out_shape)
 
