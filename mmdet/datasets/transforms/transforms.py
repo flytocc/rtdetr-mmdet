@@ -2988,7 +2988,7 @@ class RandomAffine(BaseTransform):
                 valid_index]
 
             if 'gt_masks' in results:
-                results['gt_masks'] = results['gt_masks'].project(
+                results['gt_masks'] = results['gt_masks'][valid_index].project(
                     [height, width], warp_matrix)
         return results
 

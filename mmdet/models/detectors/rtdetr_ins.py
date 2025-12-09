@@ -18,7 +18,7 @@ from ..layers import DnQueryGenerator
 from .rtdetr import RTDETR
 
 
-class RTDETRInsMixup(RTDETR):
+class RTDETRInsMixup:
     """Mixup for RTDETR family Instance Model."""
 
     def __init__(self,
@@ -348,7 +348,7 @@ class MaskFeatModule_ppdet(BaseModule):
 
 
 @MODELS.register_module()
-class MaskRTDETR_ppdet(RTDETRInsPlus):
+class MaskRTDETR_ppdet(RTDETRInsMixup, RTDETRInsPlusMixup, RTDETR):
     """MaskRTDETR in PaddleDetection
 
     Args:
@@ -362,22 +362,9 @@ class MaskRTDETR_ppdet(RTDETRInsPlus):
 
     def _init_layers(self) -> None:
         """Initialize layers except for backbone, neck and bbox_head."""
-        super(RTDETRIns, self)._init_layers()
+        super(RTDETRInsMixup, self)._init_layers()
         self.mask_features = MaskFeatModule_ppdet(**self.mask_feat_cfg)
-        self.enc_mask_output = nn.Sequential(
-            ConvModule(
-                self.num_prototypes,
-                self.num_prototypes,
-                3,
-                padding=1,
-                act_cfg=dict(type='SiLU', inplace=True),
-                norm_cfg=dict(type='BN')),
-            ConvModule(
-                self.num_prototypes,
-                self.mask_dims,
-                1,
-                act_cfg=None)
-        ) if self.num_prototypes != self.mask_dims else nn.Identity()
+        self.decoder.norm = nn.LayerNorm(self.embed_dims)
 
     def pre_decoder(
         self,
