@@ -154,11 +154,7 @@ class RTDETRInsMixup:
         factor = topk_mask.new_tensor([w, h, w, h]).unsqueeze(0)
         # mask to box is a non-differentiable operation
         masks = topk_mask.detach().reshape(-1, h, w) > 0
-        if torch.onnx.is_in_onnx_export():
-            from mmdet.structures.mask import mask2bbox
-            topk_coords_xyxy = mask2bbox(masks).reshape(bs, -1, 4)
-        else:
-            topk_coords_xyxy = mask2bbox_np(masks).reshape(bs, -1, 4)
+        topk_coords_xyxy = mask2bbox_onnx_export(masks).reshape(bs, -1, 4)
         topk_coords_normalized = bbox_xyxy_to_cxcywh(topk_coords_xyxy) / factor
         topk_coords_unact = inverse_sigmoid(topk_coords_normalized)
 
@@ -267,21 +263,26 @@ class RTDETRInsPlus(RTDETRInsPlusMixup, RTDETRIns):
     """RTDETRInsPlus with C2"""
 
 
-def mask2bbox_np(masks: Tensor) -> Tensor:
-    N = masks.shape[0]
-    boxes = np.zeros((N, 4), dtype=np.float32)
-    x_any = torch.any(masks, dim=1).cpu().numpy()
-    y_any = torch.any(masks, dim=2).cpu().numpy()
-    for idx in range(N):
-        x = np.where(x_any[idx])[0]
-        y = np.where(y_any[idx])[0]
-        if len(x) > 0 and len(y) > 0:
-            # use +1 for x_max and y_max so that the right and bottom
-            # boundary of instance masks are fully included by the box
-            boxes[idx] = np.array([x[0], y[0], x[-1] + 1, y[-1] + 1],
-                                  dtype=np.float32)
+def mask2bbox_onnx_export(masks: Tensor) -> Tensor:
+    N, H, W = masks.shape
 
-    return torch.from_numpy(boxes).to(masks.device)
+    x_any = torch.any(masks, dim=2)  # (N, H)
+    y_any = torch.any(masks, dim=1)  # (N, W)
+    x_sum = x_any.int()
+    y_sum = y_any.int()
+
+    xmin = torch.argmax(y_sum, dim=1)  # (N,)
+    ymin = torch.argmax(x_sum, dim=1)  # (N,)
+    xmax_rev = torch.argmax(torch.flip(y_sum, dims=[1]), dim=1)  # (N,)
+    ymax_rev = torch.argmax(torch.flip(x_sum, dims=[1]), dim=1)  # (N,)
+    xmax = W - xmax_rev
+    ymax = H - ymax_rev
+
+    bboxes = torch.stack([xmin, ymin, xmax, ymax], dim=1)  # (N, 4)
+
+    is_not_empty = torch.any(y_any, dim=1).unsqueeze(-1)  # (N, 1)
+    bboxes *= is_not_empty.int()
+    return bboxes.float()
 
 
 class MaskFeatModule_ppdet(BaseModule):
