@@ -296,6 +296,16 @@ class BatchSyncRandomResize(nn.Module):
                     ...,
                     1::2] = data_sample.gt_instances.bboxes[...,
                                                             1::2] * scale_y
+                if 'masks' in data_sample.gt_instances:
+                    masks = data_sample.gt_instances.masks
+                    if isinstance(masks, Tensor):
+                        data_sample.gt_instances.masks = F.interpolate(
+                            masks.unsqueeze(0),
+                            size=img_shape,
+                            mode='nearest').squeeze(0)
+                    else:
+                        data_sample.gt_instances.masks = masks.resize(
+                            img_shape)
                 if 'ignored_instances' in data_sample:
                     data_sample.ignored_instances.bboxes[
                         ..., 0::2] = data_sample.ignored_instances.bboxes[
