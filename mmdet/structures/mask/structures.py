@@ -581,6 +581,8 @@ class BitmapMasks(BaseInstanceMasks):
                 dsize=(out_shape[1], out_shape[0]),
                 flags=mmcv.image.geometric.cv2_interp_codes[interpolation],
                 borderValue=border_value)
+            if projected_masks.ndim == 2:
+                projected_masks = projected_masks[:, :, None]
             projected_masks = projected_masks.transpose(
                 (2, 0, 1)).astype(self.masks.dtype)
         return BitmapMasks(projected_masks, *out_shape)
