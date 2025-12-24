@@ -3,6 +3,8 @@ _base_ = [
 ]
 pretrained = 'https://github.com/flytocc/mmdetection/releases/download/model_zoo/resnet50vd_ssld_v2_pretrained_edfe4074.pth'  # noqa
 
+base_dim = 256
+mask_dims = base_dim
 base_size_repeat = 3
 
 model = dict(
@@ -40,38 +42,38 @@ model = dict(
         type='ChannelMapper',
         in_channels=[512, 1024, 2048],
         kernel_size=1,
-        out_channels=256,
+        out_channels=base_dim,
         act_cfg=None,
         norm_cfg=dict(type='BN', requires_grad=True)),  # GN for DINO
     encoder=dict(
         use_encoder_idx=[-1],
         num_encoder_layers=1,
-        in_channels=[256, 256, 256],
+        in_channels=[base_dim, base_dim, base_dim],
         fpn_cfg=dict(
             type='RTDETRFPN',
-            in_channels=[256, 256, 256],
-            out_channels=256,
+            in_channels=[base_dim, base_dim, base_dim],
+            out_channels=base_dim,
             expansion=1.0,
             norm_cfg=dict(type='BN', requires_grad=True)),
         layer_cfg=dict(
-            self_attn_cfg=dict(embed_dims=256, num_heads=8, dropout=0.0),
+            self_attn_cfg=dict(embed_dims=base_dim, num_heads=8, dropout=0.0),
             ffn_cfg=dict(
-                embed_dims=256,
-                feedforward_channels=1024,  # 2048 for DINO
+                embed_dims=base_dim,
+                feedforward_channels=base_dim * 4,  # 2048 for DINO
                 ffn_drop=0.0,
                 act_cfg=dict(type='GELU')))),  # ReLU for DINO
     decoder=dict(
         num_layers=6,
         return_intermediate=True,
         layer_cfg=dict(
-            self_attn_cfg=dict(embed_dims=256, num_heads=8, dropout=0.0),
+            self_attn_cfg=dict(embed_dims=base_dim, num_heads=8, dropout=0.0),
             cross_attn_cfg=dict(
-                embed_dims=256,
+                embed_dims=base_dim,
                 num_levels=3,  # 4 for DINO
                 dropout=0.0),
             ffn_cfg=dict(
-                embed_dims=256,
-                feedforward_channels=1024,  # 2048 for DINO
+                embed_dims=base_dim,
+                feedforward_channels=base_dim * 4,  # 2048 for DINO
                 ffn_drop=0.0)),
         post_norm_cfg=None),
     bbox_head=dict(
@@ -101,13 +103,12 @@ model = dict(
             eps=1.0,
             loss_weight=5.0)),
     mask_feat_cfg=dict(
-        in_channels=256,
-        feat_channels=256,
-        stacked_convs=4,
-        num_levels=3,
-        num_prototypes=256,
+        in_channels=base_dim,
+        feat_channels=base_dim // 2,
+        num_prototypes=mask_dims,
         act_cfg=dict(type='ReLU', inplace=True),
-        norm_cfg=dict(type='BN', requires_grad=True)),
+        norm_cfg=dict(
+            type='GN', num_groups=base_dim // 8, requires_grad=True)),
     dn_cfg=dict(  # TODO: Move to model.train_cfg ?
         label_noise_scale=0.5,
         box_noise_scale=1.0,
@@ -115,6 +116,7 @@ model = dict(
                        num_dn_queries=100)),  # TODO: half num_dn_queries
     # training and testing settings
     train_cfg=dict(
+        num_points=12544,  # TODO: double size of feature map ?
         assigner=dict(
             type='HungarianAssigner',
             match_costs=[

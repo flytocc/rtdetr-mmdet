@@ -13,7 +13,6 @@ from mmdet.registry import MODELS
 from mmdet.structures import OptSampleList
 from mmdet.structures.bbox import bbox_xyxy_to_cxcywh
 from mmdet.utils import ConfigType, OptConfigType
-from ..dense_heads.rtmdet_ins_head import MaskFeatModule
 from ..layers import DnQueryGenerator
 from .rtdetr import RTDETR
 
@@ -25,12 +24,10 @@ class RTDETRInsMixup:
                  *args,
                  mask_feat_cfg: ConfigType = dict(
                      in_channels=256,
-                     feat_channels=256,
-                     stacked_convs=4,
-                     num_levels=3,
+                     feat_channels=128,
                      num_prototypes=256,
                      act_cfg=dict(type='ReLU', inplace=True),
-                     norm_cfg=dict(type='BN')),
+                     norm_cfg=dict(type='GN', num_groups=32, requires_grad=True)),
                  **kwargs) -> None:
         self.mask_feat_cfg = mask_feat_cfg
         super().__init__(*args, **kwargs)
@@ -38,7 +35,7 @@ class RTDETRInsMixup:
     def _init_layers(self) -> None:
         """Initialize layers except for backbone, neck and bbox_head."""
         super()._init_layers()
-        self.mask_features = MaskFeatModule(**self.mask_feat_cfg)
+        self.mask_features = MaskFeatModule_ppdet(**self.mask_feat_cfg)
         self.decoder.norm = nn.LayerNorm(self.embed_dims)
 
     def forward_encoder(self, mlvl_feats: Tuple[Tensor],
@@ -343,17 +340,13 @@ class MaskFeatModule_ppdet(BaseModule):
         x = [inputs[i] for i in self.reorder_index]
         output = self.scale_heads[0](x[0])
         for i in range(1, len(self.fpn_strides)):
-            output = output + F.interpolate(
-                self.scale_heads[i](x[i]),
-                size=output.shape[2:],
-                mode='bilinear',
-                align_corners=False)
+            output = output + self.scale_heads[i](x[i])
         output = self.output_conv(output)
         return output
 
 
 @MODELS.register_module()
-class MaskRTDETR_ppdet(RTDETRInsMixup, RTDETRInsPlusMixup, RTDETR):
+class MaskRTDETR_ppdet(RTDETRInsPlusMixup, RTDETRIns):
     """MaskRTDETR in PaddleDetection
 
     Args:
@@ -364,12 +357,6 @@ class MaskRTDETR_ppdet(RTDETRInsMixup, RTDETRInsPlusMixup, RTDETR):
     def __init__(self, *args, dn_cfg: OptConfigType = None, **kwargs) -> None:
         super().__init__(*args, dn_cfg=dn_cfg, **kwargs)
         self.dn_query_generator = DnQueryGenerator(**dn_cfg)
-
-    def _init_layers(self) -> None:
-        """Initialize layers except for backbone, neck and bbox_head."""
-        super(RTDETRInsMixup, self)._init_layers()
-        self.mask_features = MaskFeatModule_ppdet(**self.mask_feat_cfg)
-        self.decoder.norm = nn.LayerNorm(self.embed_dims)
 
     def pre_decoder(
         self,
