@@ -19,7 +19,7 @@ model = dict(
         dict(
             type='ChannelMapper',
             in_channels=[256, 256, 256, 256],
-            kernel_size=1,
+            kernel_size=3,
             out_channels=[64, None, None, None],
             act_cfg=dict(type='SiLU', inplace=True),
             norm_cfg=dict(type='BN', requires_grad=True)),
@@ -27,14 +27,7 @@ model = dict(
     bbox_head=dict(
         mask_dims=mask_dims,
         loss_cls=dict(loss_weight=2.0)),  # 1.0 in RTDETR
-    mask_feat_cfg=dict(
-        in_channels=256,
-        feat_channels=64,
-        stacked_convs=4,
-        num_levels=3,
-        num_prototypes=num_prototypes,
-        act_cfg=dict(type='ReLU', inplace=True),
-        norm_cfg=dict(type='BN', requires_grad=True)),
+    mask_feat_cfg=dict(num_prototypes=num_prototypes),
     # training and testing settings
     train_cfg=dict(
         assigner=dict(

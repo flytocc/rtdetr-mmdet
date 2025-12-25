@@ -22,13 +22,16 @@ class RTDETRInsMixup:
 
     def __init__(self,
                  *args,
+                 mask_enhanced: bool = True,
                  mask_feat_cfg: ConfigType = dict(
                      in_channels=256,
                      feat_channels=128,
                      num_prototypes=256,
                      act_cfg=dict(type='ReLU', inplace=True),
-                     norm_cfg=dict(type='GN', num_groups=32, requires_grad=True)),
+                     norm_cfg=dict(
+                         type='GN', num_groups=32, requires_grad=True)),
                  **kwargs) -> None:
+        self.mask_enhanced = mask_enhanced
         self.mask_feat_cfg = mask_feat_cfg
         super().__init__(*args, **kwargs)
 
@@ -141,29 +144,33 @@ class RTDETRInsMixup:
                              topk_indices.unsqueeze(-1).repeat(1, 1, c))
 
         # for mask
-        enc_mask_feat = self.bbox_head.mask_branches[
-            self.decoder.num_layers](self.decoder.norm(query))
-        topk_mask = self.bbox_head.feat_to_mask(enc_mask_feat,
-                                                mask_features)
+        enc_mask_feat = self.bbox_head.mask_branches[self.decoder.num_layers](
+            self.decoder.norm(query))
+        topk_mask = self.bbox_head.feat_to_mask(enc_mask_feat, mask_features)
 
-        # unified reference points
-        h, w = topk_mask.shape[-2:]
-        factor = topk_mask.new_tensor([w, h, w, h]).unsqueeze(0)
-        # mask to box is a non-differentiable operation
-        masks = topk_mask.detach().reshape(-1, h, w) > 0
-        topk_coords_xyxy = mask2bbox_onnx_export(masks).reshape(bs, -1, 4)
-        topk_coords_normalized = bbox_xyxy_to_cxcywh(topk_coords_xyxy) / factor
-        topk_coords_unact = inverse_sigmoid(topk_coords_normalized)
-
-        if self.training:
-            topk_score = torch.gather(
-                enc_outputs_class, 1,
-                topk_indices.unsqueeze(-1).repeat(1, 1, cls_out_features))
+        if not self.mask_enhanced or self.training:
             topk_output_proposals = torch.gather(
                 output_proposals, 1,
                 topk_indices.unsqueeze(-1).repeat(1, 1, 4))
             topk_coords_unact_ori = self.bbox_head.reg_branches[
                 self.decoder.num_layers](query) + topk_output_proposals
+            topk_coords_unact = topk_coords_unact_ori
+
+        # unified reference points
+        if self.mask_enhanced:
+            h, w = topk_mask.shape[-2:]
+            factor = topk_mask.new_tensor([w, h, w, h]).unsqueeze(0)
+            # mask to box is a non-differentiable operation
+            masks = topk_mask.detach().reshape(-1, h, w) > 0
+            topk_coords_xyxy = mask2bbox_onnx_export(masks).reshape(bs, -1, 4)
+            topk_coords_normalized = bbox_xyxy_to_cxcywh(
+                topk_coords_xyxy) / factor
+            topk_coords_unact = inverse_sigmoid(topk_coords_normalized)
+
+        if self.training:
+            topk_score = torch.gather(
+                enc_outputs_class, 1,
+                topk_indices.unsqueeze(-1).repeat(1, 1, cls_out_features))
             topk_coords = topk_coords_unact_ori.sigmoid()
 
             dn_label_query, dn_bbox_query, dn_mask, dn_meta = \
@@ -226,11 +233,7 @@ class RTDETRInsPlusMixup:
                 padding=1,
                 act_cfg=dict(type='SiLU', inplace=True),
                 norm_cfg=dict(type='BN')),
-            ConvModule(
-                self.num_prototypes,
-                self.mask_dims,
-                1,
-                act_cfg=None)
+            ConvModule(self.num_prototypes, self.mask_dims, 1, act_cfg=None)
         ) if self.num_prototypes != self.mask_dims else nn.Identity()
 
     def pre_transformer(
@@ -257,7 +260,7 @@ class RTDETRInsPlusMixup:
 
 @MODELS.register_module()
 class RTDETRInsPlus(RTDETRInsPlusMixup, RTDETRIns):
-    """RTDETRInsPlus with C2"""
+    """RTDETRInsPlus with C2."""
 
 
 def mask2bbox_onnx_export(masks: Tensor) -> Tensor:
@@ -346,8 +349,8 @@ class MaskFeatModule_ppdet(BaseModule):
 
 
 @MODELS.register_module()
-class MaskRTDETR_ppdet(RTDETRInsPlusMixup, RTDETRIns):
-    """MaskRTDETR in PaddleDetection
+class MaskRTDETR(RTDETRInsPlusMixup, RTDETRIns):
+    """MaskRTDETR in PaddleDetection.
 
     Args:
         dn_cfg (:obj:`ConfigDict` or dict, optional): Config of denoising
@@ -357,6 +360,68 @@ class MaskRTDETR_ppdet(RTDETRInsPlusMixup, RTDETRIns):
     def __init__(self, *args, dn_cfg: OptConfigType = None, **kwargs) -> None:
         super().__init__(*args, dn_cfg=dn_cfg, **kwargs)
         self.dn_query_generator = DnQueryGenerator(**dn_cfg)
+
+    def _init_layers(self) -> None:
+        """Initialize layers except for backbone, neck and bbox_head."""
+        super()._init_layers()
+        self.decoder_project = self.encoder.fpn.out_convs
+        self.encoder.fpn.out_convs = nn.ModuleList([
+            nn.Identity()] * len(self.decoder_project))
+
+    def _forward_encoder(self, mlvl_feats: Tuple[Tensor],
+                        spatial_shapes: Tensor) -> Dict:
+        """Forward with Transformer encoder.
+
+        The forward procedure of the transformer is defined as:
+        'pre_transformer' -> 'encoder' -> 'pre_decoder' -> 'decoder'
+        More details can be found at `TransformerDetector.forward_transformer`
+        in `mmdet/detector/base_detr.py`.
+
+        Args:
+            mlvl_feats (tuple[Tensor]): Multi-level features that may have
+                different resolutions, output from neck. Each feature has
+                shape (bs, dim, h_lvl, w_lvl), where 'lvl' means 'layer'.
+            spatial_shapes (Tensor): Spatial shapes of features in all levels,
+                has shape (num_levels, 2), last dimension represents (h, w).
+
+        Returns:
+            dict: The output of the Transformer encoder, which includes
+            `memory`,  `mask_features` and `spatial_shapes`.
+        """
+        mlvl_feats = self.encoder(mlvl_feats)
+
+        # for mask
+        mask_features = self.mask_features(mlvl_feats)
+
+        mlvl_feats = [conv(feat) for conv, feat in zip(self.decoder_project, mlvl_feats)]
+
+        feat_flatten = []
+        for feat in mlvl_feats:
+            batch_size, c, h, w = feat.shape
+            # [bs, c, h_lvl, w_lvl] -> [bs, h_lvl*w_lvl, c]
+            feat = feat.view(batch_size, c, -1).permute(0, 2, 1)
+            feat_flatten.append(feat)
+
+        # (bs, num_feat_points, dim)
+        memory = torch.cat(feat_flatten, 1)
+
+        encoder_outputs_dict = dict(
+            memory=memory,
+            memory_mask=None,
+            mask_features=mask_features,
+            spatial_shapes=spatial_shapes)
+        return encoder_outputs_dict
+
+    def forward_encoder(self, c2_feat: Tensor, mlvl_feats: Tuple[Tensor],
+                        spatial_shapes: Tensor) -> Dict:
+        encoder_outputs_dict = self._forward_encoder(mlvl_feats,
+                                                     spatial_shapes)
+        mask_features = encoder_outputs_dict.pop('mask_features')
+        mask_features = c2_feat + F.interpolate(
+            mask_features, size=c2_feat.shape[-2:], mode='bilinear')
+        encoder_outputs_dict['mask_features'] = self.enc_mask_output(
+            mask_features)
+        return encoder_outputs_dict
 
     def pre_decoder(
         self,
@@ -406,10 +471,11 @@ class MaskRTDETR_ppdet(RTDETRInsPlusMixup, RTDETRIns):
         if self.training:
             init_coords = decoder_inputs_dict['reference_points'].sigmoid()
             norm_query = self.decoder.norm(decoder_inputs_dict['query'])
-            init_score = self.bbox_head.cls_branches[
-                self.decoder.num_layers](norm_query)
+            init_score = self.bbox_head.cls_branches[self.decoder.num_layers](
+                norm_query)
             init_mask_feat = self.bbox_head.mask_branches[
-                self.decoder.num_layers](norm_query)
+                self.decoder.num_layers](
+                    norm_query)
             init_mask = self.bbox_head.feat_to_mask(init_mask_feat,
                                                     mask_features)
             head_inputs_dict['init_outputs_class'] = init_score

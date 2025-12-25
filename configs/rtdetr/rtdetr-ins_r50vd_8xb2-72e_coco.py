@@ -104,11 +104,10 @@ model = dict(
             loss_weight=5.0)),
     mask_feat_cfg=dict(
         in_channels=base_dim,
-        feat_channels=base_dim // 2,
+        feat_channels=base_dim // 4,
         num_prototypes=mask_dims,
-        act_cfg=dict(type='ReLU', inplace=True),
-        norm_cfg=dict(
-            type='GN', num_groups=base_dim // 8, requires_grad=True)),
+        act_cfg=dict(type='SiLU', inplace=True),
+        norm_cfg=dict(type='BN', requires_grad=True)),
     dn_cfg=dict(  # TODO: Move to model.train_cfg ?
         label_noise_scale=0.5,
         box_noise_scale=1.0,

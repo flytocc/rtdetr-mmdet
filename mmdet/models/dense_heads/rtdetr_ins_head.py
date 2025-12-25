@@ -26,7 +26,7 @@ class RTDETRInsHeadMixup:
     Args:
         mask_dims (int): The dims of mask head embedding.
         num_mask_fcs (int): Number of fully-connected layers used in `FFN`,
-            which is then used for the mask head. Defaults to 3.
+            which is then used for the mask head. Defaults to 2.
         share_mask_layer (bool)
         loss_mask (:obj:`ConfigDict` or dict): Config of the mask loss.
             Defaults to None.
@@ -38,7 +38,7 @@ class RTDETRInsHeadMixup:
                  *args,
                  embed_dims: int = 256,
                  mask_dims: Optional[int] = None,
-                 num_mask_fcs: int = 3,
+                 num_mask_fcs: int = 2,
                  share_mask_layer: Optional[bool] = True,
                  share_pred_layer: bool = False,
                  vfl_iou_type: Literal['bbox', 'mask'] = 'bbox',
@@ -1189,6 +1189,32 @@ def mask_overlaps(masks1: Tensor, masks2: Tensor, eps: float = 1e-6):
 
 @MODELS.register_module()
 class MaskRTDETRHead_ppdet(RTDETRInsHead):
+
+    def _init_layers(self) -> None:
+        """Initialize classification branch and regression branch of head."""
+        assert self.share_mask_layer
+
+        fc_cls = Linear(self.embed_dims, self.cls_out_channels)
+        reg_branch = []
+        for _ in range(self.num_reg_fcs):
+            reg_branch.append(Linear(self.embed_dims, self.embed_dims))
+            reg_branch.append(nn.ReLU())
+        reg_branch.append(Linear(self.embed_dims, 4))
+        reg_branch = nn.Sequential(*reg_branch)
+
+        mask_branch = []
+        for _ in range(self.num_mask_fcs):
+            mask_branch.append(Linear(self.embed_dims, self.embed_dims))
+            mask_branch.append(nn.ReLU())
+        mask_branch.append(Linear(self.embed_dims, self.mask_dims))
+        mask_branch = nn.Sequential(*mask_branch)
+
+        self.cls_branches = nn.ModuleList(
+            [fc_cls for _ in range(self.num_pred_layer)])
+        self.reg_branches = nn.ModuleList(
+            [reg_branch for _ in range(self.num_pred_layer)])
+        self.mask_branches = nn.ModuleList(
+            [mask_branch for _ in range(self.num_pred_layer)])
 
     def loss(self, hidden_states: Tensor, references: List[Tensor],
              enc_outputs_class: Tensor, enc_outputs_coord: Tensor,
