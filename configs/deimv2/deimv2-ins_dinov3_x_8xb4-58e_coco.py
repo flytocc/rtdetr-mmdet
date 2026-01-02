@@ -163,7 +163,7 @@ model = dict(
                     dict(
                         type='DEIMV2LossCost', iou_order_alpha=4.0, weight=1.)
                 ]))),
-    test_cfg=dict(max_per_img=300, mask_thr_binary=0.5))
+    test_cfg=dict(max_per_img=100, mask_thr_binary=0.5))
 
 train_pipeline = [
     dict(type='FilterAnnotations', min_gt_bbox_wh=(1, 1), keep_empty=False),
@@ -278,6 +278,9 @@ train_dataloader = dict(
 val_dataloader = dict(
     batch_size=4, num_workers=4, dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
+
+val_evaluator = dict(proposal_nums=[100])
+test_evaluator = val_evaluator
 
 # set all norm layers in dinov3 to lr_mult=0.02 and decay_mult=0.0
 # set all other layers in dinov3 to lr_mult=0.02

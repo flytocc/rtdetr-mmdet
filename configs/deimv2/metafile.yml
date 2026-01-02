@@ -115,3 +115,35 @@ Models:
         Metrics:
           box AP: 57.8
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_dinov3_x_8xb4-58e_coco_061e5a6d.pth
+
+  - Name: deimv2-ins_dinov3_x_8xb4-58e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2-ins_dinov3_x_8xb4-58e_coco.py
+    Metadata:
+      Epochs: 58
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 57.2
+      - Task: Instance Segmentation
+        Dataset: COCO
+        Metrics:
+          mask AP: 48.7
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/mask-rtdetr/deimv2-ins_dinov3_x_8xb4-58e_coco-1cdd44b9.pth
+
+  - Name: deimv2-ins-plus_dinov3_x_8xb4-58e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2-ins-plus_dinov3_x_8xb4-58e_coco.py
+    Metadata:
+      Epochs: 58
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 57.2
+      - Task: Instance Segmentation
+        Dataset: COCO
+        Metrics:
+          mask AP: 49.2
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/mask-rtdetr/deimv2-ins-plus_dinov3_x_8xb4-58e_coco-6c342368.pth

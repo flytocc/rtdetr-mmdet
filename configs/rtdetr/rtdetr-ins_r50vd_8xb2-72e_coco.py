@@ -126,7 +126,7 @@ model = dict(
                     type='CrossEntropyLossCost', weight=5.0, use_sigmoid=True),
                 dict(type='DiceCost', weight=5.0, pred_act=True, eps=1.0)
             ])),
-    test_cfg=dict(max_per_img=300, mask_thr_binary=0.5))
+    test_cfg=dict(max_per_img=100, mask_thr_binary=0.5))
 
 # train_pipeline, NOTE the img_scale and the Pad's size_divisor is different
 # from the default setting in mmdet.
@@ -193,6 +193,9 @@ train_dataloader = dict(
     dataset=dict(pipeline=train_pipeline))
 val_dataloader = dict(batch_size=2, dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
+
+val_evaluator = dict(proposal_nums=[100])
+test_evaluator = val_evaluator
 
 # optimizer
 optim_wrapper = dict(

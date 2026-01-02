@@ -147,7 +147,7 @@ model = dict(
                     type='CrossEntropyLossCost', weight=5.0, use_sigmoid=True),
                 dict(type='DiceCost', weight=5.0, pred_act=True, eps=1.0)
             ])),
-    test_cfg=dict(max_per_img=300, mask_thr_binary=0.5))
+    test_cfg=dict(max_per_img=100, mask_thr_binary=0.5))
 
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args={{_base_.backend_args}}),
@@ -211,6 +211,9 @@ train_dataloader = dict(
 val_dataloader = dict(
     batch_size=4, num_workers=4, dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
+
+val_evaluator = dict(proposal_nums=[100])
+test_evaluator = val_evaluator
 
 # optimizer
 optim_wrapper = dict(

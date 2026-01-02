@@ -172,6 +172,7 @@ class RTDETRInsMixup:
                 enc_outputs_class, 1,
                 topk_indices.unsqueeze(-1).repeat(1, 1, cls_out_features))
             topk_coords = topk_coords_unact_ori.sigmoid()
+            topk_coords_unact = topk_coords_unact.detach()
 
             dn_label_query, dn_bbox_query, dn_mask, dn_meta = \
                 self.dn_query_generator(batch_data_samples)
