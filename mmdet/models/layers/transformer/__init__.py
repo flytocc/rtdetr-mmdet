@@ -20,7 +20,8 @@ from .grounding_dino_layers import (GroundingDinoTransformerDecoder,
 from .mask2former_layers import (Mask2FormerTransformerDecoder,
                                  Mask2FormerTransformerDecoderLayer,
                                  Mask2FormerTransformerEncoder)
-from .rtdetr_layers import RTDETRHybridEncoder, RTDETRTransformerDecoder
+from .rtdetr_layers import (DnQueryGenerator, RTDETRHybridEncoder,
+                            RTDETRTransformerDecoder)
 from .rtdetrv2_layers import RTDETRTransformerDecoderV2
 from .utils import (MLP, AdaptivePadding, ConditionalAttention, DynamicConv,
                     PatchEmbed, PatchMerging, coordinate_to_encoding,
@@ -44,5 +45,5 @@ __all__ = [
     'GroundingDinoTransformerDecoder', 'RTDETRHybridEncoder',
     'RTDETRTransformerDecoder', 'RTDETRTransformerDecoderV2',
     'DFINECdnQueryGenerator', 'DFINETransformerDecoder',
-    'DEIMV2TransformerDecoder'
+    'DEIMV2TransformerDecoder', 'DnQueryGenerator'
 ]

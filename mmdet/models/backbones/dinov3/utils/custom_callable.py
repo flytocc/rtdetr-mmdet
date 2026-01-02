@@ -9,6 +9,7 @@ import inspect
 import os
 import sys
 from pathlib import Path
+from typing import Union
 
 
 @contextlib.contextmanager
@@ -18,7 +19,7 @@ def _load_modules_from_dir(dir_: str):
     sys.path.pop(0)
 
 
-def load_custom_callable(module_path: str | Path, callable_name: str):
+def load_custom_callable(module_path: Union[str, Path], callable_name: str):
     module_full_path = os.path.realpath(module_path)
     assert os.path.exists(module_full_path), f"module {module_full_path} does not exist"
     module_dir, module_filename = os.path.split(module_full_path)

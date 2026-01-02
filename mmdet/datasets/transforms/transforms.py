@@ -2463,6 +2463,8 @@ class Mosaic(BaseTransform):
         mosaic_bboxes = []
         mosaic_bboxes_labels = []
         mosaic_ignore_flags = []
+        if 'gt_masks' in results:
+            mosaic_masks = []
         if len(results['img'].shape) == 3:
             mosaic_img = np.full(
                 (int(self.img_scale[1] * 2), int(self.img_scale[0] * 2), 3),
@@ -2518,9 +2520,19 @@ class Mosaic(BaseTransform):
             mosaic_bboxes_labels.append(gt_bboxes_labels_i)
             mosaic_ignore_flags.append(gt_ignore_flags_i)
 
+            # adjust masks
+            if 'gt_masks' in results:
+                gt_masks_i = results_patch['gt_masks']
+                gt_masks_i = gt_masks_i.resize(img_i.shape[:2])
+                gt_masks_i = gt_masks_i.expand(
+                    *mosaic_img.shape[:2], padh, padw)
+                mosaic_masks.append(gt_masks_i)
+
         mosaic_bboxes = mosaic_bboxes[0].cat(mosaic_bboxes, 0)
         mosaic_bboxes_labels = np.concatenate(mosaic_bboxes_labels, 0)
         mosaic_ignore_flags = np.concatenate(mosaic_ignore_flags, 0)
+        if 'gt_masks' in results:
+            mosaic_masks = mosaic_masks[0].cat(mosaic_masks)
 
         if self.bbox_clip_border:
             mosaic_bboxes.clip_([2 * self.img_scale[1], 2 * self.img_scale[0]])
@@ -2536,6 +2548,8 @@ class Mosaic(BaseTransform):
         results['gt_bboxes'] = mosaic_bboxes
         results['gt_bboxes_labels'] = mosaic_bboxes_labels
         results['gt_ignore_flags'] = mosaic_ignore_flags
+        if 'gt_masks' in results:
+            results['gt_masks'] = mosaic_masks
         return results
 
     def _mosaic_combine(
@@ -2970,7 +2984,8 @@ class RandomAffine(BaseTransform):
                 valid_index]
 
             if 'gt_masks' in results:
-                raise NotImplementedError('RandomAffine only supports bbox.')
+                results['gt_masks'] = results['gt_masks'][valid_index].project(
+                    [height, width], warp_matrix)
         return results
 
     def __repr__(self):

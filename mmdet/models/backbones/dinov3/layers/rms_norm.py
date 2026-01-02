@@ -20,7 +20,8 @@ class RMSNorm(nn.Module):
         return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
     def forward(self, x: Tensor) -> Tensor:
-        if hasattr(torch, 'rms_norm'):  # since 2.4
+        if not torch.onnx.is_in_onnx_export() and \
+                hasattr(torch, 'rms_norm'):  # since 2.4
             return torch.rms_norm(x, self.weight.shape, self.weight, self.eps)
 
         output = self._norm(x.float()).type_as(x)

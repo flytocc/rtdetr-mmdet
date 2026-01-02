@@ -270,6 +270,7 @@ class FocalLossCost(BaseMatchCost):
         Returns:
             torch.Tensor: cls_cost value with weight
         """
+        cls_pred = cls_pred.float()
         cls_pred = cls_pred[:, gt_labels].sigmoid()
         neg_cost = -(1 - cls_pred + self.eps).log() * (
             1 - self.alpha) * cls_pred.pow(self.gamma)
@@ -300,7 +301,7 @@ class FocalLossCost(BaseMatchCost):
         pos_cost = -(cls_pred + self.eps).log() * self.alpha * (
             1 - cls_pred).pow(self.gamma)
 
-        with torch.cuda.amp.autocast(enabled=False):
+        with torch.amp.autocast(device_type='cuda', enabled=False):
             cls_cost = pos_cost @ gt_labels.T + neg_cost @ (1 - gt_labels).T
         return cls_cost / n * self.weight
 
@@ -352,8 +353,7 @@ class BinaryFocalLossCost(FocalLossCost):
         pos_cost = -(cls_pred + self.eps).log() * self.alpha * (
             1 - cls_pred).pow(self.gamma)
 
-        cls_cost = torch.einsum('nc,mc->nm', pos_cost, gt_labels) + \
-            torch.einsum('nc,mc->nm', neg_cost, (1 - gt_labels))
+        cls_cost = pos_cost @ gt_labels.T + neg_cost @ (1 - gt_labels).T
         return cls_cost * self.weight
 
     def __call__(self,
@@ -421,7 +421,7 @@ class DiceCost(BaseMatchCost):
         """
         mask_preds = mask_preds.flatten(1)
         gt_masks = gt_masks.flatten(1).float()
-        numerator = 2 * torch.einsum('nc,mc->nm', mask_preds, gt_masks)
+        numerator = 2 * (mask_preds @ gt_masks.T)
         if self.naive_dice:
             denominator = mask_preds.sum(-1)[:, None] + \
                           gt_masks.sum(-1)[None, :]
@@ -492,8 +492,8 @@ class CrossEntropyLossCost(BaseMatchCost):
             cls_pred, torch.ones_like(cls_pred), reduction='none')
         neg = F.binary_cross_entropy_with_logits(
             cls_pred, torch.zeros_like(cls_pred), reduction='none')
-        cls_cost = torch.einsum('nc,mc->nm', pos, gt_labels) + \
-            torch.einsum('nc,mc->nm', neg, 1 - gt_labels)
+        with torch.amp.autocast(device_type='cuda', enabled=False):
+            cls_cost = pos @ gt_labels.T + neg @ (1 - gt_labels).T
         cls_cost = cls_cost / n
 
         return cls_cost

@@ -31,11 +31,7 @@ import time
 from collections import defaultdict
 
 import numpy as np
-
-try:
-    import faster_coco_eval.core.mask as maskUtils
-except ImportError:
-    import pycocotools.mask as maskUtils
+import pycocotools.mask as maskUtils
 
 PYTHON_VERSION = sys.version_info[0]
 

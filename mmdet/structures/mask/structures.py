@@ -1,19 +1,15 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import itertools
 from abc import ABCMeta, abstractmethod
-from typing import Sequence, Type, TypeVar
+from typing import Sequence, Type, TypeVar, Union
 
 import cv2
 import mmcv
 import numpy as np
+import pycocotools.mask as maskUtils
 import shapely.geometry as geometry
 import torch
 from mmcv.ops.roi_align import roi_align
-
-try:
-    import faster_coco_eval.core.mask as maskUtils
-except ImportError:
-    import pycocotools.mask as maskUtils
 
 T = TypeVar('T')
 
@@ -198,6 +194,21 @@ class BaseInstanceMasks(metaclass=ABCMeta):
             Rotated masks.
         """
 
+    def project(self,
+                out_shape,
+                homography_matrix: Union[torch.Tensor, np.ndarray],
+                border_value=0,
+                interpolation='bilinear'):
+        """Geometric transformat masks.
+
+        Args:
+            out_shape (tuple[int]): Shape for output mask, format (h, w).
+            homography_matrix (Tensor or np.ndarray]):
+                Shape (3, 3) for geometric transformation.
+            border_value (int | float): Border value. Default 0 for masks.
+            interpolation (str): See :func:`mmcv.imresize`.
+        """
+
     def get_bboxes(self, dst_type='hbb'):
         """Get the certain type boxes from masks.
 
@@ -260,7 +271,7 @@ class BitmapMasks(BaseInstanceMasks):
         self.height = height
         self.width = width
         if len(masks) == 0:
-            self.masks = np.empty((0, self.height, self.width), dtype=np.uint8)
+            self.masks = np.empty((0, self.height, self.width), dtype=bool)
         else:
             assert isinstance(masks, (list, np.ndarray))
             if isinstance(masks, list):
@@ -303,7 +314,7 @@ class BitmapMasks(BaseInstanceMasks):
         """See :func:`BaseInstanceMasks.rescale`."""
         if len(self.masks) == 0:
             new_w, new_h = mmcv.rescale_size((self.width, self.height), scale)
-            rescaled_masks = np.empty((0, new_h, new_w), dtype=np.uint8)
+            rescaled_masks = np.empty((0, new_h, new_w), dtype=bool)
         else:
             rescaled_masks = np.stack([
                 mmcv.imrescale(mask, scale, interpolation=interpolation)
@@ -315,7 +326,7 @@ class BitmapMasks(BaseInstanceMasks):
     def resize(self, out_shape, interpolation='nearest'):
         """See :func:`BaseInstanceMasks.resize`."""
         if len(self.masks) == 0:
-            resized_masks = np.empty((0, *out_shape), dtype=np.uint8)
+            resized_masks = np.empty((0, *out_shape), dtype=bool)
         else:
             resized_masks = np.stack([
                 mmcv.imresize(
@@ -340,7 +351,7 @@ class BitmapMasks(BaseInstanceMasks):
     def pad(self, out_shape, pad_val=0):
         """See :func:`BaseInstanceMasks.pad`."""
         if len(self.masks) == 0:
-            padded_masks = np.empty((0, *out_shape), dtype=np.uint8)
+            padded_masks = np.empty((0, *out_shape), dtype=bool)
         else:
             padded_masks = np.stack([
                 mmcv.impad(mask, shape=out_shape, pad_val=pad_val)
@@ -362,7 +373,7 @@ class BitmapMasks(BaseInstanceMasks):
         h = np.maximum(y2 - y1, 1)
 
         if len(self.masks) == 0:
-            cropped_masks = np.empty((0, h, w), dtype=np.uint8)
+            cropped_masks = np.empty((0, h, w), dtype=bool)
         else:
             cropped_masks = self.masks[:, y1:y1 + h, x1:x1 + w]
         return BitmapMasks(cropped_masks, h, w)
@@ -376,7 +387,7 @@ class BitmapMasks(BaseInstanceMasks):
                         binarize=True):
         """See :func:`BaseInstanceMasks.crop_and_resize`."""
         if len(self.masks) == 0:
-            empty_masks = np.empty((0, *out_shape), dtype=np.uint8)
+            empty_masks = np.empty((0, *out_shape), dtype=bool)
             return BitmapMasks(empty_masks, *out_shape)
 
         # convert bboxes to tensor
@@ -406,11 +417,10 @@ class BitmapMasks(BaseInstanceMasks):
     def expand(self, expanded_h, expanded_w, top, left):
         """See :func:`BaseInstanceMasks.expand`."""
         if len(self.masks) == 0:
-            expanded_mask = np.empty((0, expanded_h, expanded_w),
-                                     dtype=np.uint8)
+            expanded_mask = np.empty((0, expanded_h, expanded_w), dtype=bool)
         else:
             expanded_mask = np.zeros((len(self), expanded_h, expanded_w),
-                                     dtype=np.uint8)
+                                     dtype=self.masks.dtype)
             expanded_mask[:, top:top + self.height,
                           left:left + self.width] = self.masks
         return BitmapMasks(expanded_mask, expanded_h, expanded_w)
@@ -436,7 +446,7 @@ class BitmapMasks(BaseInstanceMasks):
 
         Example:
             >>> from mmdet.data_elements.mask.structures import BitmapMasks
-            >>> self = BitmapMasks.random(dtype=np.uint8)
+            >>> self = BitmapMasks.random(dtype=bool)
             >>> out_shape = (32, 32)
             >>> offset = 4
             >>> direction = 'horizontal'
@@ -450,15 +460,16 @@ class BitmapMasks(BaseInstanceMasks):
             >>> assert new.height, new.width == out_shape
         """
         if len(self.masks) == 0:
-            translated_masks = np.empty((0, *out_shape), dtype=np.uint8)
+            translated_masks = np.empty((0, *out_shape), dtype=bool)
         else:
             masks = self.masks
-            if masks.shape[-2:] != out_shape:
-                empty_masks = np.zeros((masks.shape[0], *out_shape),
+            n, h, w = masks.shape
+            out_h, out_w = out_shape
+            if out_h > h or out_w > w:
+                # expand masks to avoid cropping during translation
+                empty_masks = np.zeros((n, max(out_h, h), max(out_w, w)),
                                        dtype=masks.dtype)
-                min_h = min(out_shape[0], masks.shape[1])
-                min_w = min(out_shape[1], masks.shape[2])
-                empty_masks[:, :min_h, :min_w] = masks[:, :min_h, :min_w]
+                empty_masks[:, :h, :w] = masks
                 masks = empty_masks
             translated_masks = mmcv.imtranslate(
                 masks.transpose((1, 2, 0)),
@@ -466,6 +477,9 @@ class BitmapMasks(BaseInstanceMasks):
                 direction,
                 border_value=border_value,
                 interpolation=interpolation)
+            if masks.shape[-2:] != out_shape:
+                translated_masks = translated_masks[
+                    :out_shape[0], :out_shape[1]]
             if translated_masks.ndim == 2:
                 translated_masks = translated_masks[:, :, None]
             translated_masks = translated_masks.transpose(
@@ -493,7 +507,7 @@ class BitmapMasks(BaseInstanceMasks):
             BitmapMasks: The sheared masks.
         """
         if len(self.masks) == 0:
-            sheared_masks = np.empty((0, *out_shape), dtype=np.uint8)
+            sheared_masks = np.empty((0, *out_shape), dtype=bool)
         else:
             sheared_masks = mmcv.imshear(
                 self.masks.transpose((1, 2, 0)),
@@ -534,7 +548,7 @@ class BitmapMasks(BaseInstanceMasks):
             rotated_masks = np.empty((0, *out_shape), dtype=self.masks.dtype)
         else:
             rotated_masks = mmcv.imrotate(
-                self.masks.transpose((1, 2, 0)),
+                self.masks.transpose((1, 2, 0)).astype(np.uint8),
                 angle,
                 center=center,
                 scale=scale,
@@ -546,6 +560,32 @@ class BitmapMasks(BaseInstanceMasks):
             rotated_masks = rotated_masks.transpose(
                 (2, 0, 1)).astype(self.masks.dtype)
         return BitmapMasks(rotated_masks, *out_shape)
+
+    def project(self,
+                out_shape,
+                homography_matrix: Union[torch.Tensor, np.ndarray],
+                border_value=0,
+                interpolation='bilinear'):
+        """Geometric transformat masks.
+
+        Args:
+            homography_matrix (Tensor or np.ndarray]):
+                Shape (3, 3) for geometric transformation.
+        """
+        if len(self.masks) == 0:
+            projected_masks = np.empty((0, *out_shape), dtype=self.masks.dtype)
+        else:
+            projected_masks = cv2.warpPerspective(
+                self.masks.transpose((1, 2, 0)).astype(np.uint8),
+                homography_matrix,
+                dsize=(out_shape[1], out_shape[0]),
+                flags=mmcv.image.geometric.cv2_interp_codes[interpolation],
+                borderValue=border_value)
+            if projected_masks.ndim == 2:
+                projected_masks = projected_masks[:, :, None]
+            projected_masks = projected_masks.transpose(
+                (2, 0, 1)).astype(self.masks.dtype)
+        return BitmapMasks(projected_masks, *out_shape)
 
     @property
     def areas(self):
@@ -561,12 +601,7 @@ class BitmapMasks(BaseInstanceMasks):
         return torch.tensor(self.masks, dtype=dtype, device=device)
 
     @classmethod
-    def random(cls,
-               num_masks=3,
-               height=32,
-               width=32,
-               dtype=np.uint8,
-               rng=None):
+    def random(cls, num_masks=3, height=32, width=32, dtype=bool, rng=None):
         """Generate random bitmap masks for demo / testing purposes.
 
         Example:
@@ -640,11 +675,14 @@ class PolygonMasks(BaseInstanceMasks):
         >>> assert new.height, new.width == out_shape
     """
 
+    _simple_clip = False
+
     def __init__(self, masks, height, width):
         assert isinstance(masks, list)
         if len(masks) > 0:
             assert isinstance(masks[0], list)
             assert isinstance(masks[0][0], np.ndarray)
+            assert masks[0][0].dtype == np.float64
 
         self.height = height
         self.width = width
@@ -711,8 +749,8 @@ class PolygonMasks(BaseInstanceMasks):
                 resized_poly = []
                 for p in poly_per_obj:
                     p = p.copy()
-                    p[0::2] = p[0::2] * w_scale
-                    p[1::2] = p[1::2] * h_scale
+                    p[0::2] *= w_scale
+                    p[1::2] *= h_scale
                     resized_poly.append(p)
                 resized_masks.append(resized_poly)
             resized_masks = PolygonMasks(resized_masks, *out_shape)
@@ -787,7 +825,8 @@ class PolygonMasks(BaseInstanceMasks):
                         if not isinstance(
                                 poly, geometry.Polygon) or not poly.is_valid:
                             continue
-                        coords = np.asarray(poly.exterior.coords)
+                        coords = np.asarray(
+                            poly.exterior.coords, dtype=np.float64)
                         # remove an extra identical vertex at the end
                         coords = coords[:-1]
                         coords[:, 0] -= x1
@@ -795,7 +834,7 @@ class PolygonMasks(BaseInstanceMasks):
                         cropped_poly_per_obj.append(coords.reshape(-1))
                 # a dummy polygon to avoid misalignment between masks and boxes
                 if len(cropped_poly_per_obj) == 0:
-                    cropped_poly_per_obj = [np.array([0, 0, 0, 0, 0, 0])]
+                    cropped_poly_per_obj = [np.zeros(6, dtype=np.float64)]
                 cropped_masks.append(cropped_poly_per_obj)
             np.seterr(**initial_settings)
             cropped_masks = PolygonMasks(cropped_masks, h, w)
@@ -805,9 +844,29 @@ class PolygonMasks(BaseInstanceMasks):
         """padding has no effect on polygons`"""
         return PolygonMasks(self.masks, *out_shape)
 
-    def expand(self, *args, **kwargs):
-        """TODO: Add expand for polygon"""
-        raise NotImplementedError
+    def expand(self, expanded_h, expanded_w, top, left):
+        """see :func:`BaseInstanceMasks.expand`"""
+        if len(self.masks) == 0:
+            expanded_masks = PolygonMasks([], expanded_h, expanded_w)
+        else:
+            expanded_masks = []
+            for poly_per_obj in self.masks:
+                expanded_poly_per_obj = []
+                for p in poly_per_obj:
+                    p = p.copy()
+                    p[0::2] += left
+                    p[1::2] += top
+                    if self._simple_clip:
+                        p[0::2] = np.clip(p[0::2], 0, expanded_w)
+                        p[1::2] = np.clip(p[1::2], 0, expanded_h)
+                    expanded_poly_per_obj.append(p)
+                expanded_masks.append(expanded_poly_per_obj)
+            expanded_masks = PolygonMasks(expanded_masks, expanded_h,
+                                          expanded_w)
+            if not self._simple_clip:
+                expanded_masks = expanded_masks.crop(
+                    np.array([0, 0, expanded_w, expanded_h]))
+        return expanded_masks
 
     def crop_and_resize(self,
                         bboxes,
@@ -840,12 +899,12 @@ class PolygonMasks(BaseInstanceMasks):
                 p = p.copy()
                 # crop
                 # pycocotools will clip the boundary
-                p[0::2] = p[0::2] - bbox[0]
-                p[1::2] = p[1::2] - bbox[1]
+                p[0::2] -= bbox[0]
+                p[1::2] -= bbox[1]
 
                 # resize
-                p[0::2] = p[0::2] * w_scale
-                p[1::2] = p[1::2] * h_scale
+                p[0::2] *= w_scale
+                p[1::2] *= h_scale
                 resized_mask.append(p)
             resized_masks.append(resized_mask)
         return PolygonMasks(resized_masks, *out_shape)
@@ -877,12 +936,19 @@ class PolygonMasks(BaseInstanceMasks):
                 for p in poly_per_obj:
                     p = p.copy()
                     if direction == 'horizontal':
-                        p[0::2] = np.clip(p[0::2] + offset, 0, out_shape[1])
+                        p[0::2] += offset
+                        if self._simple_clip:
+                            p[0::2] = np.clip(p[0::2], 0, out_shape[1])
                     elif direction == 'vertical':
-                        p[1::2] = np.clip(p[1::2] + offset, 0, out_shape[0])
+                        p[1::2] += offset
+                        if self._simple_clip:
+                            p[1::2] = np.clip(p[1::2], 0, out_shape[0])
                     translated_poly_per_obj.append(p)
                 translated_masks.append(translated_poly_per_obj)
             translated_masks = PolygonMasks(translated_masks, *out_shape)
+            if not self._simple_clip:
+                translated_masks = translated_masks.crop(
+                    np.array([0, 0, out_shape[1], out_shape[0]]))
         return translated_masks
 
     def shear(self,
@@ -898,23 +964,27 @@ class PolygonMasks(BaseInstanceMasks):
             sheared_masks = []
             if direction == 'horizontal':
                 shear_matrix = np.stack([[1, magnitude],
-                                         [0, 1]]).astype(np.float32)
+                                         [0, 1]]).astype(np.float64)
             elif direction == 'vertical':
                 shear_matrix = np.stack([[1, 0], [magnitude,
-                                                  1]]).astype(np.float32)
+                                                  1]]).astype(np.float64)
             for poly_per_obj in self.masks:
                 sheared_poly = []
                 for p in poly_per_obj:
                     p = np.stack([p[0::2], p[1::2]], axis=0)  # [2, n]
                     new_coords = np.matmul(shear_matrix, p)  # [2, n]
-                    new_coords[0, :] = np.clip(new_coords[0, :], 0,
-                                               out_shape[1])
-                    new_coords[1, :] = np.clip(new_coords[1, :], 0,
-                                               out_shape[0])
+                    if self._simple_clip:
+                        new_coords[0, :] = np.clip(new_coords[0, :], 0,
+                                                   out_shape[1])
+                        new_coords[1, :] = np.clip(new_coords[1, :], 0,
+                                                   out_shape[0])
                     sheared_poly.append(
                         new_coords.transpose((1, 0)).reshape(-1))
                 sheared_masks.append(sheared_poly)
             sheared_masks = PolygonMasks(sheared_masks, *out_shape)
+            if not self._simple_clip:
+                sheared_masks = sheared_masks.crop(
+                    np.array([0, 0, out_shape[1], out_shape[0]]))
         return sheared_masks
 
     def rotate(self,
@@ -928,6 +998,8 @@ class PolygonMasks(BaseInstanceMasks):
         if len(self.masks) == 0:
             rotated_masks = PolygonMasks([], *out_shape)
         else:
+            if center is None:
+                center = (out_shape[1] * 0.5, out_shape[0] * 0.5)
             rotated_masks = []
             rotate_matrix = cv2.getRotationMatrix2D(center, -angle, scale)
             for poly_per_obj in self.masks:
@@ -943,14 +1015,82 @@ class PolygonMasks(BaseInstanceMasks):
                     rotated_coords = np.matmul(
                         rotate_matrix[None, :, :],
                         coords[:, :, None])[..., 0]  # [n, 2, 1] -> [n, 2]
-                    rotated_coords[:, 0] = np.clip(rotated_coords[:, 0], 0,
-                                                   out_shape[1])
-                    rotated_coords[:, 1] = np.clip(rotated_coords[:, 1], 0,
-                                                   out_shape[0])
+                    if self._simple_clip:
+                        rotated_coords[:, 0] = np.clip(rotated_coords[:, 0], 0,
+                                                       out_shape[1])
+                        rotated_coords[:, 1] = np.clip(rotated_coords[:, 1], 0,
+                                                       out_shape[0])
                     rotated_poly.append(rotated_coords.reshape(-1))
                 rotated_masks.append(rotated_poly)
             rotated_masks = PolygonMasks(rotated_masks, *out_shape)
+            if not self._simple_clip:
+                rotated_masks = rotated_masks.crop(
+                    np.array([0, 0, out_shape[1], out_shape[0]]))
         return rotated_masks
+
+    def project(self,
+                out_shape,
+                homography_matrix: Union[torch.Tensor, np.ndarray],
+                border_value=0,
+                interpolation='bilinear'):
+        """Geometric transformat masks.
+
+        Args:
+            homography_matrix (Tensor or np.ndarray]):
+                Shape (3, 3) for geometric transformation.
+        """
+        if isinstance(homography_matrix, torch.Tensor):
+            homography_matrix = homography_matrix.cpu().numpy()
+        if len(self.masks) == 0:
+            return PolygonMasks([], *out_shape)
+
+        projected_masks = []
+        for poly_per_obj in self.masks:
+            projected_poly = []
+            for p in poly_per_obj:
+                p = p.copy()
+                coords = np.stack([p[0::2], p[1::2]], axis=1)  # [n, 2]
+                # pad 1 to convert from format [x, y] to homogeneous
+                # coordinates format [x, y, 1]
+                coords = np.concatenate(
+                    (coords, np.ones((coords.shape[0], 1), coords.dtype)),
+                    axis=1)  # [N, 3]
+
+                # Apply the homography matrix.
+                # homography_matrix is (3, 3). coords is (N, 3).
+                # We need (3, 3) @ (3, N) -> (3, N) OR (N, 3) @ (3, 3).
+                # Let's use the standard vector-matrix product:
+                # projected_coords is (N, 3)
+                projected_coords = coords @ homography_matrix.T
+
+                # Handle division by zero (should not typically happen for valid
+                # homographies) and perform perspective division: (x'/w', y'/w')
+
+                # Create a safeguard against division by zero
+                # By convention, if w is near zero, the point is at infinity
+                # (out of the view). We can replace w_prime with 1 where it's
+                # near zero to avoid NaNs, but the point will be heavily
+                # distorted or clipped later. A small epsilon is used to avoid
+                # division by exact zero.
+                w_prime = projected_coords[:, 2:3]
+                w_prime[np.abs(w_prime) < np.finfo(w_prime.dtype).eps] = 1.0
+                projected_coords = projected_coords[:, :2] / w_prime
+
+                if self._simple_clip:
+                    projected_coords[:, 0] = np.clip(projected_coords[:, 0], 0,
+                                                     out_shape[1])
+                    projected_coords[:, 1] = np.clip(projected_coords[:, 1], 0,
+                                                     out_shape[0])
+
+                # Flatten the coordinates back into the original format [x1', y1', x2', y2', ...]
+                projected_poly.append(projected_coords.reshape(-1))
+
+            projected_masks.append(projected_poly)
+        projected_masks = PolygonMasks(projected_masks, *out_shape)
+        if not self._simple_clip:
+            projected_masks = projected_masks.crop(
+                np.array([0, 0, out_shape[1], out_shape[0]]))
+        return projected_masks
 
     def to_bitmap(self):
         """convert polygon masks to bitmap masks."""
@@ -995,7 +1135,7 @@ class PolygonMasks(BaseInstanceMasks):
     def to_ndarray(self):
         """Convert masks to the format of ndarray."""
         if len(self.masks) == 0:
-            return np.empty((0, self.height, self.width), dtype=np.uint8)
+            return np.empty((0, self.height, self.width), dtype=bool)
         bitmap_masks = []
         for poly_per_obj in self.masks:
             bitmap_masks.append(

@@ -1,12 +1,8 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import numpy as np
+import pycocotools.mask as maskUtils
 import torch
 from mmengine.utils import slice_list
-
-try:
-    import faster_coco_eval.core.mask as maskUtils
-except ImportError:
-    import pycocotools.mask as maskUtils
 
 
 def split_combined_polys(polys, poly_lens, polys_per_mask):

@@ -65,28 +65,33 @@ class ChannelMapper(BaseModule):
     ) -> None:
         super().__init__(init_cfg=init_cfg)
         assert isinstance(in_channels, list)
+        if isinstance(out_channels, int):
+            out_channels = [out_channels] * len(in_channels)
+        assert isinstance(out_channels, list)
         self.extra_convs = None
         if num_outs is None:
             num_outs = len(in_channels)
         self.convs = nn.ModuleList()
-        for in_channel in in_channels:
+        for in_channel, out_channel in zip(in_channels, out_channels):
             self.convs.append(
                 ConvModule(
                     in_channel,
-                    out_channels,
+                    out_channel,
                     kernel_size,
                     padding=(kernel_size - 1) // 2,
                     conv_cfg=conv_cfg,
                     norm_cfg=norm_cfg,
                     act_cfg=act_cfg,
-                    bias=bias))
+                    bias=bias) if out_channel is not None else nn.Identity())
         if num_outs > len(in_channels):
+            out_channel = out_channels[-1]
+            assert out_channel is not None
             self.extra_convs = nn.ModuleList()
             for i in range(len(in_channels), num_outs):
                 if i == len(in_channels):
                     in_channel = in_channels[-1]
                 else:
-                    in_channel = out_channels
+                    in_channel = out_channel
                 self.extra_convs.append(
                     ConvModule(
                         in_channel,

@@ -908,7 +908,7 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                  num_layers: int = 6,
                  remove_cross_attn_value_proj_and_output_proj: bool = True,
                  update_query_pos: bool = True,
-                 with_lqe: bool = False,
+                 with_lqe: bool = True,
                  **kwargs) -> None:
         if eval_idx < 0:
             eval_idx = num_layers + eval_idx
@@ -1076,8 +1076,10 @@ class DFINETransformerDecoder(RTDETRTransformerDecoder):
                     reference_points_initial.detach()
 
                 if self.training:
-                    all_layers_outputs_classes.append(cls_branches[0](
-                        self.norm(query)))
+                    norm_query = self.norm(query)
+                    hidden_states.append((lid, norm_query))
+                    all_layers_outputs_classes.append(
+                        cls_branches[0](norm_query))
                     all_layers_outputs_coords.append(reference_points_initial)
 
             # Refine bounding box corners using FDR,

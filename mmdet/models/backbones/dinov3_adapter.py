@@ -24,8 +24,9 @@ from .vit_tiny import VisionTransformer
 
 class SpatialPriorModulev2(nn.Module):
 
-    def __init__(self, inplanes=16):
+    def __init__(self, inplanes=16, return_c1=False):
         super().__init__()
+        self.return_c1 = return_c1
 
         # 1/4
         self.stem = nn.Sequential(
@@ -66,6 +67,8 @@ class SpatialPriorModulev2(nn.Module):
         c3 = self.conv3(c2)     # 1/16
         c4 = self.conv4(c3)     # 1/32
 
+        if self.return_c1:
+            return c1, c2, c3, c4
         return c2, c3, c4
 
 
@@ -88,16 +91,14 @@ class DINOv3STAs(nn.Module):
         super(DINOv3STAs, self).__init__()
         if 'dinov3' in name:
             self.dinov3 = DinoVisionTransformer(name=name)
-            if weights_path is not None:
-                assert os.path.exists(weights_path)
+            if weights_path is not None and os.path.exists(weights_path):
                 print(f'Loading ckpt from {weights_path}...')
                 self.dinov3.load_state_dict(torch.load(weights_path, 'cpu'))
             else:
                 print('Training DINOv3 from scratch...')
         else:
             self.dinov3 =  VisionTransformer(embed_dim=embed_dim, num_heads=num_heads, return_layers=interaction_indexes)
-            if weights_path is not None:
-                assert os.path.exists(weights_path)
+            if weights_path is not None and os.path.exists(weights_path):
                 print(f'Loading ckpt from {weights_path}...')
                 self.dinov3._model.load_state_dict(torch.load(weights_path))
             else:
@@ -107,6 +108,10 @@ class DINOv3STAs(nn.Module):
         self.interaction_indexes = interaction_indexes
         self.patch_size = patch_size
 
+        assert len(interaction_indexes) in [3, 4], \
+            'The length of interaction_indexes should be 3 or 4.'
+        return_c1 = len(interaction_indexes) == 4
+
         if not finetune:
             self.dinov3.eval()
             self.dinov3.requires_grad_(False)
@@ -115,7 +120,7 @@ class DINOv3STAs(nn.Module):
         self.use_sta = use_sta
         if use_sta:
             print(f"Using Lite Spatial Prior Module with inplanes={conv_inplane}")
-            self.sta = SpatialPriorModulev2(inplanes=conv_inplane)
+            self.sta = SpatialPriorModulev2(inplanes=conv_inplane, return_c1=return_c1)
         else:
             conv_inplane = 0
 
@@ -133,6 +138,10 @@ class DINOv3STAs(nn.Module):
             nn.SyncBatchNorm(hidden_dim)
         ])
 
+        if return_c1:
+            self.convs.insert(0, nn.Conv2d(embed_dim + conv_inplane, hidden_dim, kernel_size=1, stride=1, padding=0, bias=False))
+            self.norms.insert(0, nn.SyncBatchNorm(hidden_dim))
+
     def forward(self, x):
         # Code for matching with oss
         H_c, W_c = x.shape[2] // 16, x.shape[3] // 16
@@ -148,7 +157,7 @@ class DINOv3STAs(nn.Module):
 
         if len(all_layers) == 1:    # repeat the same layer for all the three scales
             all_layers = [all_layers[0], all_layers[0], all_layers[0]]
-        
+
         sem_feats = []
         num_scales = len(all_layers) - 2
         for i, sem_feat in enumerate(all_layers):
@@ -167,8 +176,8 @@ class DINOv3STAs(nn.Module):
         else:
             fused_feats = sem_feats
 
-        c2 = self.norms[0](self.convs[0](fused_feats[0]))
-        c3 = self.norms[1](self.convs[1](fused_feats[1]))
-        c4 = self.norms[2](self.convs[2](fused_feats[2]))
+        outs = []
+        for i in range(len(fused_feats)):
+            outs.append(self.norms[i](self.convs[i](fused_feats[i])))
 
-        return c2, c3, c4
+        return tuple(outs)  # c2, c3, c4 (and c1 if use sta with 4 indexes)

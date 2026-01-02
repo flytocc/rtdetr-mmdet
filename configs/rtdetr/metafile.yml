@@ -103,3 +103,19 @@ Models:
         Metrics:
           box AP: 54.8
     Weights: https://github.com/flytocc/mmdetection/releases/download/model_zoo/rtdetr_hgnetv2_x_8xb2-72e_coco_032ec6fe.pth
+
+  - Name: mask_rtdetr_hgnetv2_l_8xb2-72e_coco
+    In Collection: RT-DETR
+    Config: configs/rtdetr/mask_rtdetr_hgnetv2_l_8xb2-72e_coco.py
+    Metadata:
+      Epochs: 72
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 51.4
+      - Task: Instance Segmentation
+        Dataset: COCO
+        Metrics:
+          mask AP: 45.8
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/mask-rtdetr/mask_rtdetr_hgnetv2_l_8xb2-72e_coco-dfb2b9c7.pth

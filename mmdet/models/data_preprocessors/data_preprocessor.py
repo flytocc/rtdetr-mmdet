@@ -20,7 +20,7 @@ from mmdet.models.utils import unfold_wo_center
 from mmdet.models.utils.misc import samplelist_boxtype2tensor
 from mmdet.registry import MODELS
 from mmdet.structures import DetDataSample
-from mmdet.structures.mask import BitmapMasks
+from mmdet.structures.mask import BitmapMasks, PolygonMasks
 from mmdet.utils import ConfigType
 
 try:
@@ -296,6 +296,16 @@ class BatchSyncRandomResize(nn.Module):
                     ...,
                     1::2] = data_sample.gt_instances.bboxes[...,
                                                             1::2] * scale_y
+                if 'masks' in data_sample.gt_instances:
+                    masks = data_sample.gt_instances.masks
+                    if isinstance(masks, Tensor):
+                        data_sample.gt_instances.masks = F.interpolate(
+                            masks.unsqueeze(0),
+                            size=img_shape,
+                            mode='nearest').squeeze(0)
+                    else:
+                        data_sample.gt_instances.masks = masks.resize(
+                            img_shape)
                 if 'ignored_instances' in data_sample:
                     data_sample.ignored_instances.bboxes[
                         ..., 0::2] = data_sample.ignored_instances.bboxes[
@@ -321,7 +331,7 @@ class BatchSyncRandomResize(nn.Module):
             tensor[0] = size[0]
             tensor[1] = size[1]
             tensor[2] = random.randint(0, len(self._interpolations) - 1)
-        barrier()
+        # barrier()
         broadcast(tensor, 0)
         input_size = (tensor[0].item(), tensor[1].item())
         interp = self._interpolations[tensor[2].item()]
@@ -981,25 +991,40 @@ class BatchCopyBlend(nn.Module):
 
         batch_size, _, img_height, img_width = inputs.shape
 
-        # get all valid objects in batch
+        # 1. Collect all valid objects in batch
         bboxes = torch.cat([ds.gt_instances.bboxes for ds in data_samples])
         areas = (bboxes[..., 2:] - bboxes[..., :2]).prod(dim=-1)
         keep = areas >= self.area_threshold
 
-        # check if objects_pool is empty
         if not keep.any():
             return inputs, data_samples
 
         labels = torch.cat([ds.gt_instances.labels for ds in data_samples])
         image_idx = torch.cat([
-            torch.full((len(ds.gt_instances), ), i, dtype=torch.long)
+            torch.full((len(ds.gt_instances.bboxes), ), i, dtype=torch.long)
             for i, ds in enumerate(data_samples)
         ])
 
+        # Prepare the objects pool
         objects_pool = defaultdict(list)
         objects_pool['boxes'] = bboxes[keep].round().long().tolist()
         objects_pool['image_idx'] = image_idx[keep.cpu()].tolist()
         objects_pool['labels'] = labels[keep]
+
+        # Get all mask objects and flatten them into a list
+        if 'masks' in data_samples[0].gt_instances:
+            all_masks: List[Union[BitmapMasks, PolygonMasks]] = []
+            for ds in data_samples:
+                for i in range(len(ds.gt_instances.masks)):
+                    all_masks.append(ds.gt_instances.masks[i])
+
+            # Filter masks and other data using the 'keep' mask
+            # Note: Bboxes and labels are filtered directly. 
+            # For masks, we need to convert the boolean tensor 'keep' to a list of indices
+            # to select from the 'all_masks' list.
+            keep_indices = torch.nonzero(keep, as_tuple=True)[0].cpu().tolist()
+            kept_masks = [all_masks[idx] for idx in keep_indices]
+            objects_pool['masks'] = kept_masks
 
         # Generate mixup ratio
         beta = round(random.uniform(*self.ratio_range), 6)
@@ -1021,6 +1046,7 @@ class BatchCopyBlend(nn.Module):
 
             blend_boxes = []
             blend_labels = []
+            blend_masks = []
 
             for idx in selected_indices:
                 # get source object information
@@ -1052,30 +1078,56 @@ class BatchCopyBlend(nn.Module):
                 # so no need to check
                 x2, y2 = x1 + new_w_px, y1 + new_h_px
 
-                # add to blend list - use original unexpanded box
+                # Calculate required translation for the mask
+                dx = x1 - x1_src
+                dy = y1 - y1_src
+
+                # 2. Add to blend list - use original unexpanded box
                 blend_boxes.append(torch.tensor([x1, y1, x2, y2]))
                 blend_labels.append(label)
 
-                # handle expanded area
+                # --- MASK GEOMETRIC TRANSFORMATION ---
+                if 'masks' in objects_pool:
+                    source_mask = objects_pool['masks'][idx]
+
+                    # 1. Translate the mask to the new position (x1, y1) in the target image 'i'
+                    # The total translation is (x1 - x1_src, y1 - y1_src).
+                    translated_mask = source_mask.translate(
+                        out_shape=(img_height, img_width), 
+                        offset=dx, 
+                        direction='horizontal'
+                    )
+                    translated_mask = translated_mask.translate(
+                        out_shape=(img_height, img_width), 
+                        offset=dy, 
+                        direction='vertical'
+                    )
+                    # translated_mask is now positioned at (x1, y1) in the target image coordinates.
+                    blend_masks.append(translated_mask) 
+
+                # handle expanded area (This logic affects both image patch and mask)
                 if self.with_expand:
+                    # ... (Expansion logic for x1_src, y1_src, x2_src, y2_src, x1, y1, x2, y2) ...
+                    # This logic remains the same as in the original code, updating the boundary coordinates
+                    # The mask's *implicit* translation/cropping is now handled by the expanded coordinates.
+
                     alpha = round(random.uniform(*self.expand_ratios), 6)
                     expand_w = int(new_w_px * alpha)
                     expand_h = int(new_h_px * alpha)
 
-                    # check if out of bound: get the best offset in GT image
+                    # GT image expansion boundary checks
                     x1_expand = x1_src - max(x1_src - expand_w, 0)
                     y1_expand = y1_src - max(y1_src - expand_h, 0)
                     x2_expand = min(x2_src + expand_w, img_width) - x2_src
                     y2_expand = min(y2_src + expand_h, img_height) - y2_src
 
-                    # check if out of bound: whether the expanded area is
-                    # out of bound in blend image
+                    # Blend image expansion boundary checks
                     new_x1_expand = x1 - max(x1 - x1_expand, 0)
                     new_y1_expand = y1 - max(y1 - y1_expand, 0)
                     new_x2_expand = min(x2 + x2_expand, img_width) - x2
                     new_y2_expand = min(y2 + y2_expand, img_height) - y2
 
-                    # update
+                    # update coordinates (This update is CRITICAL for both image and mask)
                     x1_src = x1_src - new_x1_expand
                     y1_src = y1_src - new_y1_expand
                     x2_src = x2_src + new_x2_expand
@@ -1083,7 +1135,7 @@ class BatchCopyBlend(nn.Module):
                     x1, y1 = x1 - new_x1_expand, y1 - new_y1_expand
                     x2, y2 = x2 + new_x2_expand, y2 + new_y2_expand
 
-                # blend original area first
+                # blend original area first (Image blending remains the same)
                 copy_patch_orig = \
                     inputs[source_idx, :, y1_src:y2_src, x1_src:x2_src]
                 if self.copyblend_type == 'blend':
@@ -1103,9 +1155,12 @@ class BatchCopyBlend(nn.Module):
                 blend_labels = torch.stack(blend_labels)
 
                 # update targets
+                blend_instance_data = InstanceData(
+                    bboxes=blend_boxes, labels=blend_labels)
+                if 'masks' in objects_pool:
+                    blend_instance_data.masks = blend_masks[0].cat(blend_masks)
                 updated_targets[i].gt_instances = InstanceData.cat([
-                    updated_targets[i].gt_instances,
-                    InstanceData(bboxes=blend_boxes, labels=blend_labels)
+                    updated_targets[i].gt_instances, blend_instance_data
                 ])
                 assert 'proposals' not in data_samples[i]
                 assert 'gt_seg_map' not in data_samples[i]

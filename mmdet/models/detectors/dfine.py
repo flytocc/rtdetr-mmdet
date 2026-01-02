@@ -10,6 +10,7 @@ from ..layers import (DFINECdnQueryGenerator, DFINETransformerDecoder,
 from ..layers.transformer.dfine_layers import (
     LQE, Gate, MultiNumPointsMultiScaleDeformableAttention)
 from .rtdetr import RTDETR
+from .rtdetr_ins import RTDETRInsMixup
 
 
 @MODELS.register_module()
@@ -48,3 +49,8 @@ class DFINE(RTDETR):
                 for layer in m.reg_conf.layers[:-1]:
                     nn.init.kaiming_uniform_(layer.weight, a=math.sqrt(5))
                 m.init_weights()
+
+
+@MODELS.register_module()
+class DFINEIns(RTDETRInsMixup, DFINE):
+    """DFINE for Instance."""
