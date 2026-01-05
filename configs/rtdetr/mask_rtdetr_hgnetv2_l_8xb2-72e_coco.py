@@ -38,7 +38,7 @@ model = dict(
         type='MaskRTDETRHead_ppdet',
         vfl_iou_type='mask',
         mask_dims=mask_dims,
-        loss_cls=dict(loss_weight=4.0)),  # 1.0 in RTDETR
+        loss_cls=dict(loss_weight=2.0)),  # 1.0 in RTDETR
     mask_feat_cfg=dict(num_prototypes=num_prototypes),
     # training and testing settings
     train_cfg=dict(
