@@ -279,7 +279,7 @@ val_dataloader = dict(
     batch_size=4, num_workers=4, dataset=dict(pipeline=test_pipeline))
 test_dataloader = dict(dataset=dict(pipeline=test_pipeline))
 
-val_evaluator = dict(proposal_nums=[100])
+val_evaluator = dict(proposal_nums=(100, 1, 10))
 test_evaluator = val_evaluator
 
 # set all norm layers in dinov3 to lr_mult=0.02 and decay_mult=0.0
