@@ -3,13 +3,17 @@
 ## TODO
 
 - [ ] RTDETRv4
-- [ ] Instance Segmentation for DEIM / DEIMv2
+- [x] Instance Segmentation for DEIM / DEIMv2
 - [x] Instance Segmentation for RTDETR / RTDETRv2
 - [x] DEIMv2
 
 ***
 
 ## Training Logs
+
+DEIM v2 Ins                       | bbox | mask | weight | log
+:---------------------------------|:-----|:-----|:-------|:---
+deimv2-ins_dinov3_x_8xb4-58e_coco | 57.2 | 49.2 | [download](https://github.com/flytocc/rtdetr-mmdet/releases/download/mask-rtdetr/deimv2-ins-plus_dinov3_x_8xb4-58e_coco-6c342368.pth) | [download](https://github.com/flytocc/rtdetr-mmdet/releases/download/logs/deimv2-ins_dinov3_x_8xb4-58e_coco.log)
 
 DEIM v2                         | ours | official | gap    | checked | log
 :-------------------------------|:-----|:---------|:-------|:--------|:----
