@@ -21,7 +21,7 @@ from ..losses import VarifocalLoss
 from ..utils import get_uncertain_point_coords_with_randomness, multi_apply
 from .rtdetr_head import RTDETRHead
 from .rtdetr_ins_dyconv_head import RTDETRInsDyConvHeadMixup
-from .rtdetr_ins_head import RTDETRInsHeadMixup
+from .rtdetr_ins_head import RTDETRInsHeadMixup, mask_overlaps
 
 
 @MODELS.register_module()
@@ -1247,7 +1247,6 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         self.cached_fgl_targets = None
         self.cached_dn_targets = None
         self.cached_dn_fgl_targets = None
-        self.cached_dn_mask_targets = None
         self.num_pos, self.num_neg = None, None
 
         (losses_cls, losses_bbox, losses_iou, losses_fgl, losses_ddf,
@@ -1438,31 +1437,210 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
             Tuple[Tensor]: A tuple including `loss_cls`, `loss_box` and
             `loss_iou`.
         """
-        (loss_cls, loss_bbox, loss_iou,
-         loss_fgl, loss_ddf) = super().loss_by_feat_single(
-             cls_scores, bbox_preds, bbox_corners, teacher,
-             batch_match_indices, initial_bbox_preds, merged_match_indices,
-             batch_gt_instances, batch_img_metas)
+        num_imgs, num_queries, _ = cls_scores.shape
+        (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
+         bbox_num_pos_list) = multi_apply(
+             self._get_cls_targets_single,
+             batch_match_indices,
+             batch_gt_instances,
+             batch_img_metas,
+             num_queries=num_queries,
+             device=bbox_preds.device)
+        num_total_pos = sum(bbox_num_pos_list)
+        num_total_neg = num_imgs * num_queries - num_total_pos
+        labels = torch.cat(labels_list, 0)
+        label_weights = torch.cat(label_weights_list, 0)
+        bbox_targets = torch.cat(bbox_targets_list, 0)
 
-        mask_targets_list, mask_weights_list, mask_num_pos_list = multi_apply(
+        mask_targets_list, mask_weights_list = multi_apply(
             self._get_mask_targets_single,
             batch_match_indices,
             batch_gt_instances,
             batch_img_metas,
-            num_queries=mask_preds.shape[1],
+            num_queries=num_queries,
             device=bbox_preds.device)
-        num_total_pos = sum(mask_num_pos_list)
         mask_targets = torch.cat(mask_targets_list, 0)
         mask_weights = torch.stack(mask_weights_list, 0)
+
+        # classification loss
+        cls_scores = cls_scores.reshape(-1, self.cls_out_channels)
+        # construct weighted avg_factor to match with the official DETR repo
+        cls_avg_factor = num_total_pos * 1.0 + \
+            num_total_neg * self.bg_cls_weight
+        if self.sync_cls_avg_factor:
+            cls_avg_factor = reduce_mean(
+                cls_scores.new_tensor([cls_avg_factor])).item()
+        cls_avg_factor = max(cls_avg_factor, 1)
 
         # extract positive ones
         # shape (batch_size, num_queries, h, w) -> (num_total_gts, h, w)
         mask_preds = mask_preds[mask_weights > 0]
 
-        # Compute the average number of gt boxes across all gpus, for
-        # normalization purposes
-        num_total_pos = bbox_preds.new_tensor([num_total_pos])
-        num_total_pos = torch.clamp(reduce_mean(num_total_pos), min=1).item()
+        if isinstance(self.loss_cls, VarifocalLoss):
+            bg_class_ind = self.num_classes
+            pos_inds = ((labels >= 0)
+                        & (labels < bg_class_ind)).nonzero().squeeze(1)
+            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+            pos_labels = labels[pos_inds]
+            if self.vfl_iou_type == 'mask':
+                pos_mask_preds = mask_preds.detach()
+                pos_mask_preds = F.interpolate(
+                    pos_mask_preds.unsqueeze(1),
+                    scale_factor=2,
+                    mode='bilinear',
+                    align_corners=False).squeeze(1)
+                pos_mask_preds = (
+                    pos_mask_preds > self.test_cfg.mask_thr_binary).float()
+
+                pos_mask_targets = mask_targets.float()
+                if pos_mask_preds.shape[-1] != pos_mask_targets.shape[-1] \
+                        or pos_mask_preds.shape[-2] != pos_mask_targets.shape[-2]:
+                    pos_mask_targets = F.interpolate(
+                        pos_mask_targets.unsqueeze(1),
+                        size=pos_mask_preds.shape[-2:],
+                        mode='bilinear',
+                        align_corners=False).squeeze(1)
+
+                cls_iou_targets[pos_inds, pos_labels] = mask_overlaps(
+                    pos_mask_preds, pos_mask_targets).type_as(cls_iou_targets)
+            else:
+                pos_bbox_targets = bbox_targets[pos_inds]
+                pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
+                pos_bbox_pred = bbox_preds.detach().reshape(-1, 4)[pos_inds]
+                pos_decode_bbox_pred = bbox_cxcywh_to_xyxy(pos_bbox_pred)
+                cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
+                    pos_decode_bbox_pred,
+                    pos_decode_bbox_targets,
+                    is_aligned=True).type_as(cls_iou_targets)
+
+            loss_cls = self.loss_cls(
+                cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
+        else:
+            loss_cls = self.loss_cls(
+                cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
+
+        if num_queries not in self.cached_bbox_targets or not self.use_uni_set:
+            if self.use_uni_set:
+                (bbox_targets_list, bbox_weights_list,
+                 bbox_num_pos_list) = multi_apply(
+                     self._get_bbox_targets_single,
+                     merged_match_indices,
+                     batch_gt_instances,
+                     batch_img_metas,
+                     num_queries=num_queries,
+                     device=bbox_preds.device)
+                num_total_bbox_pos = sum(bbox_num_pos_list)
+                bbox_targets = torch.cat(bbox_targets_list, 0)
+            else:
+                num_total_bbox_pos = num_total_pos
+
+            bbox_weights = torch.cat(bbox_weights_list, 0)
+
+            # Compute the average number of gt boxes across all gpus, for
+            # normalization purposes
+            bbox_avg_factor = bbox_preds.new_tensor([num_total_bbox_pos])
+            bbox_avg_factor = torch.clamp(
+                reduce_mean(bbox_avg_factor), min=1).item()
+
+            self.cached_bbox_targets[num_queries] = (bbox_targets,
+                                                     bbox_weights,
+                                                     num_total_bbox_pos,
+                                                     bbox_avg_factor)
+        else:
+            # use cached bbox targets
+            (bbox_targets, bbox_weights, num_total_bbox_pos,
+             bbox_avg_factor) = self.cached_bbox_targets[num_queries]
+
+        # construct factors used for rescale bboxes
+        factors = []
+        for img_meta, bbox_pred in zip(batch_img_metas, bbox_preds):
+            img_h, img_w, = img_meta['img_shape']
+            factor = bbox_pred.new_tensor([img_w, img_h, img_w,
+                                           img_h]).unsqueeze(0).repeat(
+                                               bbox_pred.size(0), 1)
+            factors.append(factor)
+        factors = torch.cat(factors, 0)
+
+        # DETR regress the relative position of boxes (cxcywh) in the image,
+        # thus the learning target is normalized by the image size. So here
+        # we need to re-scale them for calculating IoU loss
+        bbox_preds = bbox_preds.reshape(-1, 4)
+        bboxes = bbox_cxcywh_to_xyxy(bbox_preds) * factors
+        bboxes_gt = bbox_cxcywh_to_xyxy(bbox_targets) * factors
+
+        # regression IoU loss, defaultly GIoU loss
+        loss_iou = self.loss_iou(
+            bboxes, bboxes_gt, bbox_weights, avg_factor=bbox_avg_factor)
+
+        # regression L1 loss
+        loss_bbox = self.loss_bbox(
+            bbox_preds, bbox_targets, bbox_weights, avg_factor=bbox_avg_factor)
+
+        if bbox_corners is None:
+            loss_fgl = loss_ddf = None
+            with_fgl_loss = with_dff_loss = False
+        else:
+            loss_fgl = loss_ddf = bbox_corners.new_tensor(0)
+            with_fgl_loss = self.fgl_loss_weight is not None
+            with_dff_loss = self.loss_ld is not None and teacher is not None
+
+        if with_fgl_loss or with_dff_loss:
+            bbox_pos_inds = torch.nonzero(
+                bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
+            pos_ious = bbox_overlaps(
+                bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
+                is_aligned=True).detach()
+
+        # distribution focal loss
+        if with_fgl_loss:
+            initial_bbox_preds = initial_bbox_preds.reshape(-1, 4)
+            bbox_corners = bbox_corners.reshape(-1, 4, self.reg_max + 1)
+            weight_targets = pos_ious.unsqueeze(-1).repeat(1, 4).reshape(-1)
+
+            if self.cached_fgl_targets is None:
+                self.cached_fgl_targets = bbox2distance(
+                    initial_bbox_preds[bbox_pos_inds],
+                    bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]),
+                    self.reg_max, self.reg_scale, 0.5)
+            target_corners, weight_right, weight_left = self.cached_fgl_targets
+
+            loss_fgl = self.fgl_loss_weight * unimodal_distribution_focal_loss(
+                bbox_corners[bbox_pos_inds].reshape(-1, self.reg_max + 1),
+                target_corners,
+                weight_right=weight_right,
+                weight_left=weight_left,
+                weight=weight_targets,
+                avg_factor=bbox_avg_factor)
+
+        # vari KnowledgeDistillationKLDivLoss
+        if with_dff_loss:
+            teacher_scores, teacher_corners = teacher
+            teacher_scores = teacher_scores.reshape(-1, self.cls_out_channels)
+            teacher_corners = teacher_corners.reshape(-1, self.reg_max + 1)
+            bbox_corners = bbox_corners.reshape(-1, self.reg_max + 1)
+
+            weight_targets_local = teacher_scores.sigmoid().max(dim=-1)[0]
+            weight_targets_local[bbox_pos_inds] = \
+                pos_ious.type_as(weight_targets_local)
+            weight_targets_local = \
+                weight_targets_local.unsqueeze(-1).repeat(1, 4).reshape(-1)
+
+            loss_match_local = self.loss_ld(bbox_corners, teacher_corners,
+                                            weight_targets_local) * (
+                                                self.reg_max + 1)
+
+            mask = bbox_weights.bool().reshape(-1)
+            num_total_bbox_neg = bbox_weights.size(0) - num_total_bbox_pos
+            if self.num_pos is None:
+                self.num_pos = (num_total_bbox_pos * 4 * 8 / num_imgs)**0.5
+                self.num_neg = (num_total_bbox_neg * 4 * 8 / num_imgs)**0.5
+            loss_match_local1 = loss_match_local[mask].mean() \
+                if num_total_bbox_pos > 0 else 0
+            loss_match_local2 = loss_match_local[~mask].mean() \
+                if num_total_bbox_neg > 0 else 0
+            loss_ddf = (loss_match_local1 * self.num_pos +
+                        loss_match_local2 * self.num_neg) / (
+                            self.num_pos + self.num_neg)
 
         with torch.no_grad():
             points_coords = get_uncertain_point_coords_with_randomness(
@@ -1477,7 +1655,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
 
         # dice loss
         loss_dice = self.loss_dice(
-            mask_point_preds, mask_point_targets, avg_factor=num_total_pos)
+            mask_point_preds, mask_point_targets, avg_factor=bbox_avg_factor)
 
         # mask loss
         # shape (num_queries, num_points) -> (num_queries * num_points, )
@@ -1487,7 +1665,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         loss_mask = self.loss_mask(
             mask_point_preds,
             mask_point_targets,
-            avg_factor=num_total_pos * self.num_points)
+            avg_factor=bbox_avg_factor * self.num_points)
 
         return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf, loss_mask,
                 loss_dice)
@@ -1525,7 +1703,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         mask_targets = gt_masks[pos_assigned_gt_inds]
         mask_weights = torch.zeros(num_queries, device=device)
         mask_weights[pos_inds] = 1.0
-        return mask_targets, mask_weights, pos_inds.numel()
+        return mask_targets, mask_weights
 
     def _loss_dn_single(self, dn_cls_scores: Tensor, dn_bbox_preds: Tensor,
                         dn_mask_preds: Tensor,
@@ -1565,45 +1743,201 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
             Tuple[Tensor]: A tuple including `loss_cls`, `loss_box` and
             `loss_iou`.
         """
-        (loss_cls, loss_bbox, loss_iou, loss_fgl,
-         loss_ddf) = super()._loss_dn_single(dn_cls_scores, dn_bbox_preds,
-                                             dn_bbox_corners, teacher,
-                                             initial_dn_bbox_preds,
-                                             batch_gt_instances,
-                                             batch_img_metas, dn_meta)
-
         if dn_cls_scores.size(1) == 0:
+            loss_cls = dn_cls_scores.new_tensor(0)
+            loss_bbox = loss_iou = dn_bbox_preds.new_tensor(0)
+            loss_fgl = loss_ddf = dn_bbox_corners.new_tensor(0) \
+                if dn_bbox_corners is not None else None
             loss_mask = loss_dice = dn_mask_preds.new_tensor(0)
             return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf,
                     loss_mask, loss_dice)
 
-        if self.cached_dn_mask_targets is None:
-            (mask_targets_list, mask_weights_list,
-             mask_num_pos_list) = multi_apply(
-                 self._get_dn_mask_targets_single,
-                 batch_gt_instances,
-                 batch_img_metas,
-                 dn_meta=dn_meta)
-            num_total_pos = sum(mask_num_pos_list)
+        if self.cached_dn_targets is None:
+            cls_reg_targets = self.get_dn_targets(batch_gt_instances,
+                                                  batch_img_metas, dn_meta)
+            (labels_list, label_weights_list, bbox_targets_list,
+             bbox_weights_list, num_total_pos, num_total_neg) = cls_reg_targets
+            labels = torch.cat(labels_list, 0)
+            label_weights = torch.cat(label_weights_list, 0)
+            bbox_targets = torch.cat(bbox_targets_list, 0)
+            bbox_weights = torch.cat(bbox_weights_list, 0)
+
+            mask_targets_list, mask_weights_list = multi_apply(
+                self._get_dn_mask_targets_single,
+                batch_gt_instances,
+                batch_img_metas,
+                dn_meta=dn_meta)
             mask_targets = torch.cat(mask_targets_list, 0)
             mask_weights = torch.stack(mask_weights_list, 0)
 
+            # construct weighted avg_factor
+            # to match with the official DETR repo
+            cls_avg_factor = \
+                num_total_pos * 1.0 + num_total_neg * self.bg_cls_weight
+            if self.sync_cls_avg_factor:
+                cls_avg_factor = reduce_mean(
+                    dn_bbox_preds.new_tensor([cls_avg_factor])).item()
+            cls_avg_factor = max(cls_avg_factor, 1)
+
             # Compute the average number of gt boxes across all gpus, for
             # normalization purposes
-            num_total_pos = dn_mask_preds.new_tensor([num_total_pos])
-            num_total_pos = torch.clamp(
-                reduce_mean(num_total_pos), min=1).item()
+            if self.bg_cls_weight == 0:
+                bbox_avg_factor = cls_avg_factor
+            else:
+                bbox_avg_factor = dn_bbox_preds.new_tensor([num_total_pos])
+                bbox_avg_factor = torch.clamp(
+                    reduce_mean(bbox_avg_factor), min=1).item()
 
-            self.cached_dn_mask_targets = (mask_targets, mask_weights,
-                                           num_total_pos)
+            self.cached_dn_targets = (labels, label_weights, bbox_targets,
+                                      bbox_weights, num_total_pos,
+                                      cls_avg_factor, bbox_avg_factor,
+                                      mask_targets, mask_weights)
         else:
             # use cached dn targets
-            (mask_targets, mask_weights,
-             num_total_pos) = self.cached_dn_mask_targets
+            (labels, label_weights, bbox_targets, bbox_weights, num_total_pos,
+             cls_avg_factor, bbox_avg_factor, mask_targets,
+             mask_weights) = self.cached_dn_targets
+
+        # classification loss
+        cls_scores = dn_cls_scores.reshape(-1, self.cls_out_channels)
 
         # extract positive ones
         # shape (batch_size, num_queries, h, w) -> (num_total_gts, h, w)
         mask_preds = dn_mask_preds[mask_weights > 0]
+
+        if isinstance(self.loss_cls, VarifocalLoss):
+            bg_class_ind = self.num_classes
+            pos_inds = ((labels >= 0)
+                        & (labels < bg_class_ind)).nonzero().squeeze(1)
+            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+            pos_labels = labels[pos_inds]
+            if self.vfl_iou_type == 'mask':
+                pos_mask_preds = mask_preds.detach()
+                pos_mask_preds = F.interpolate(
+                    pos_mask_preds.unsqueeze(1),
+                    scale_factor=2,
+                    mode='bilinear',
+                    align_corners=False).squeeze(1)
+                pos_mask_preds = (
+                    pos_mask_preds > self.test_cfg.mask_thr_binary).float()
+
+                pos_mask_targets = mask_targets.float()
+                if pos_mask_preds.shape[-1] != pos_mask_targets.shape[-1] \
+                        or pos_mask_preds.shape[-2] != pos_mask_targets.shape[-2]:
+                    pos_mask_targets = F.interpolate(
+                        pos_mask_targets.unsqueeze(1),
+                        size=pos_mask_preds.shape[-2:],
+                        mode='bilinear',
+                        align_corners=False).squeeze(1)
+
+                cls_iou_targets[pos_inds, pos_labels] = mask_overlaps(
+                    pos_mask_preds,
+                    pos_mask_targets).type_as(cls_iou_targets)
+            else:
+                pos_bbox_targets = bbox_targets[pos_inds]
+                pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
+                pos_bbox_pred = dn_bbox_preds.detach().reshape(-1, 4)[pos_inds]
+                pos_decode_bbox_pred = bbox_cxcywh_to_xyxy(pos_bbox_pred)
+                cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
+                    pos_decode_bbox_pred,
+                    pos_decode_bbox_targets,
+                    is_aligned=True).type_as(cls_iou_targets)
+
+            loss_cls = self.loss_cls(
+                cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
+        else:
+            loss_cls = self.loss_cls(
+                cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
+
+        # construct factors used for rescale bboxes
+        factors = []
+        for img_meta, bbox_pred in zip(batch_img_metas, dn_bbox_preds):
+            img_h, img_w = img_meta['img_shape']
+            factor = bbox_pred.new_tensor([img_w, img_h, img_w,
+                                           img_h]).unsqueeze(0).repeat(
+                                               bbox_pred.size(0), 1)
+            factors.append(factor)
+        factors = torch.cat(factors)
+
+        # DETR regress the relative position of boxes (cxcywh) in the image,
+        # thus the learning target is normalized by the image size. So here
+        # we need to re-scale them for calculating IoU loss
+        bbox_preds = dn_bbox_preds.reshape(-1, 4)
+        bboxes = bbox_cxcywh_to_xyxy(bbox_preds) * factors
+        bboxes_gt = bbox_cxcywh_to_xyxy(bbox_targets) * factors
+
+        # regression IoU loss, defaultly GIoU loss
+        loss_iou = self.loss_iou(
+            bboxes, bboxes_gt, bbox_weights, avg_factor=bbox_avg_factor)
+
+        # regression L1 loss
+        loss_bbox = self.loss_bbox(
+            bbox_preds, bbox_targets, bbox_weights, avg_factor=bbox_avg_factor)
+
+        if dn_bbox_corners is None:
+            loss_fgl = loss_ddf = None
+            with_fgl_loss = with_dff_loss = False
+        else:
+            loss_fgl = loss_ddf = dn_bbox_corners.new_tensor(0)
+            with_fgl_loss = self.fgl_loss_weight is not None
+            with_dff_loss = self.loss_ld is not None and teacher is not None
+
+        if with_fgl_loss or with_dff_loss:
+            bbox_pos_inds = torch.nonzero(
+                bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
+            pos_ious = bbox_overlaps(
+                bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
+                is_aligned=True).detach()
+
+        # distribution focal loss
+        if with_fgl_loss:
+            initial_dn_bbox_preds = initial_dn_bbox_preds.reshape(-1, 4)
+            dn_bbox_corners = dn_bbox_corners.reshape(-1, 4, self.reg_max + 1)
+            weight_targets = pos_ious.unsqueeze(-1).repeat(1, 4).reshape(-1)
+
+            if self.cached_dn_fgl_targets is None:
+                self.cached_dn_fgl_targets = bbox2distance(
+                    initial_dn_bbox_preds[bbox_pos_inds],
+                    bbox_cxcywh_to_xyxy(bbox_targets[bbox_pos_inds]),
+                    self.reg_max, self.reg_scale, 0.5)
+            (target_corners, weight_right,
+             weight_left) = self.cached_dn_fgl_targets
+
+            loss_fgl = self.fgl_loss_weight * unimodal_distribution_focal_loss(
+                dn_bbox_corners[bbox_pos_inds].reshape(-1, self.reg_max + 1),
+                target_corners,
+                weight_right=weight_right,
+                weight_left=weight_left,
+                weight=weight_targets,
+                avg_factor=bbox_avg_factor)
+
+        # vari KnowledgeDistillationKLDivLoss
+        if with_dff_loss:
+            teacher_scores, teacher_corners = teacher
+            teacher_scores = teacher_scores.reshape(-1, self.cls_out_channels)
+            teacher_corners = teacher_corners.reshape(-1, self.reg_max + 1)
+            dn_bbox_corners = dn_bbox_corners.reshape(-1, self.reg_max + 1)
+
+            weight_targets_local = teacher_scores.sigmoid().max(dim=-1)[0]
+            weight_targets_local[bbox_pos_inds] = \
+                pos_ious.type_as(weight_targets_local)
+            weight_targets_local = weight_targets_local.unsqueeze(-1).repeat(
+                1, 4).reshape(-1)
+
+            loss_match_local = self.loss_ld(dn_bbox_corners, teacher_corners,
+                                            weight_targets_local) * (
+                                                self.reg_max + 1)
+
+            mask = bbox_weights.bool().reshape(-1)
+            num_total_bbox_pos = num_total_pos
+            num_total_bbox_neg = bbox_weights.size(0) - num_total_bbox_pos
+            loss_match_local1 = loss_match_local[mask].mean() \
+                if num_total_bbox_pos > 0 else 0
+            loss_match_local2 = loss_match_local[~mask].mean() \
+                if num_total_bbox_neg > 0 else 0
+            loss_ddf = (loss_match_local1 * self.num_pos +
+                        loss_match_local2 * self.num_neg) / (
+                            self.num_pos + self.num_neg)
 
         with torch.no_grad():
             points_coords = get_uncertain_point_coords_with_randomness(
@@ -1618,7 +1952,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
 
         # dice loss
         loss_dice = self.loss_dice(
-            mask_point_preds, mask_point_targets, avg_factor=num_total_pos)
+            mask_point_preds, mask_point_targets, avg_factor=bbox_avg_factor)
 
         # mask loss
         # shape (num_queries, num_points) -> (num_queries * num_points, )
@@ -1628,7 +1962,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         loss_mask = self.loss_mask(
             mask_point_preds,
             mask_point_targets,
-            avg_factor=num_total_pos * self.num_points)
+            avg_factor=bbox_avg_factor * self.num_points)
 
         return (loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf, loss_mask,
                 loss_dice)
@@ -1656,7 +1990,7 @@ class DFINEInsHead(RTDETRInsHeadMixup, DFINEHead):
         mask_weights = torch.zeros(num_denoising_queries, device=device)
         mask_weights[pos_inds] = 1.0
 
-        return mask_targets, mask_weights, pos_inds.numel()
+        return mask_targets, mask_weights
 
 
 @MODELS.register_module()
