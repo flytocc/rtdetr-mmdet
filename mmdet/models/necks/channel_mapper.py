@@ -95,7 +95,7 @@ class ChannelMapper(BaseModule):
                 self.extra_convs.append(
                     ConvModule(
                         in_channel,
-                        out_channels,
+                        out_channel,
                         3,
                         stride=2,
                         padding=1,
