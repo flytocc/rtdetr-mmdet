@@ -1,0 +1,69 @@
+Collections:
+  - Name: RT-DETR v4
+    Metadata:
+      Training Data: COCO
+      Training Techniques:
+        - AdamW
+        - Weight Decay
+        - Multi Scale Train
+        - Gradient Clip
+      Training Resources: 8x A100 GPUs
+      Architecture:
+        - HGNetV2
+        - Transformer
+    Paper:
+      URL: https://arxiv.org/pdf/2510.25257
+      Title: 'RT-DETRv4: Painlessly Furthering Real-Time Object Detection with Vision Foundation Models'
+    README: 
+    Code:
+      URL: 
+      Version: v3.3.0
+
+Models:
+  - Name: rtdetrv4_hgnetv2_s_8xb4-132e_coco
+    In Collection: RT-DETR v4
+    Config: configs/rtdetrv4/rtdetrv4_hgnetv2_s_8xb4-132e_coco.py
+    Metadata:
+      Epochs: 132
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 49.8
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv4/rtdetrv4_hgnetv2_s_8xb4-132e_coco-276aba74.pth
+
+  - Name: rtdetrv4_hgnetv2_m_8xb4-102e_coco
+    In Collection: RT-DETR v4
+    Config: configs/rtdetrv4/rtdetrv4_hgnetv2_m_8xb4-102e_coco.py
+    Metadata:
+      Epochs: 102
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 53.7
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv4/rtdetrv4_hgnetv2_m_8xb4-102e_coco-e8ece46d.pth
+
+  - Name: rtdetrv4_hgnetv2_l_8xb4-58e_coco
+    In Collection: RT-DETR v4
+    Config: configs/rtdetrv4/rtdetrv4_hgnetv2_l_8xb4-58e_coco.py
+    Metadata:
+      Epochs: 58
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 55.4
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv4/rtdetrv4_hgnetv2_l_8xb4-58e_coco-b550eaf8.pth
+
+  - Name: rtdetrv4_hgnetv2_x_8xb4-58e_coco
+    In Collection: RT-DETR v4
+    Config: configs/rtdetrv4/rtdetrv4_hgnetv2_x_8xb4-58e_coco.py
+    Metadata:
+      Epochs: 58
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 57.0
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv4/rtdetrv4_hgnetv2_x_8xb4-58e_coco-abdceaa0.pth

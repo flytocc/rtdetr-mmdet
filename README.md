@@ -2,7 +2,7 @@
 
 ## TODO
 
-- [ ] RTDETRv4
+- [x] RTDETRv4 (inference only)
 - [x] Instance Segmentation for DEIM / DEIMv2
 - [x] Instance Segmentation for RTDETR / RTDETRv2
 - [x] DEIMv2

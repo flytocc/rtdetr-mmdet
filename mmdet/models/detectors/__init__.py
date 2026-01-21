@@ -48,6 +48,7 @@ from .rpn import RPN
 from .rtdetr import RTDETR
 from .rtdetr_ins import RTDETRIns
 from .rtdetrv2 import RTDETRV2
+from .rtdetrv4 import RTDETRV4
 from .rtmdet import RTMDet
 from .scnet import SCNet
 from .semi_base import SemiBaseDetector
@@ -78,5 +79,5 @@ __all__ = [
     'RTMDet', 'Detectron2Wrapper', 'CrowdDet', 'CondInst', 'BoxInst',
     'DetectionTransformer', 'ConditionalDETR', 'DINO', 'DABDETR', 'GLIP',
     'DDQDETR', 'GroundingDINO', 'RTDETR', 'RTDETRV2', 'DFINE', 'DEIMDFINE',
-    'DEIMRTDETR', 'DEIMV2', 'RTDETRIns'
+    'DEIMRTDETR', 'DEIMV2', 'RTDETRIns', 'RTDETRV4'
 ]
