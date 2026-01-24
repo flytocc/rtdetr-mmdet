@@ -16,7 +16,7 @@ from mmdet.structures.bbox import (bbox_cxcywh_to_xyxy, bbox_overlaps,
                                    bbox_xyxy_to_cxcywh)
 from mmdet.structures.mask import BaseInstanceMasks
 from mmdet.utils import ConfigType, InstanceList, OptInstanceList, reduce_mean
-from ..losses import RTDETRVarifocalLoss
+from ..losses import VarifocalLoss
 from ..utils import get_uncertain_point_coords_with_randomness, multi_apply
 from .rtdetr_head import RTDETRHead
 
@@ -603,11 +603,11 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
                 cls_scores.new_tensor([cls_avg_factor])).item()
         cls_avg_factor = max(cls_avg_factor, 1)
 
-        if isinstance(self.loss_cls, RTDETRVarifocalLoss):
-            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+        if isinstance(self.loss_cls, VarifocalLoss):
             bg_class_ind = self.num_classes
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
+            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
             pos_labels = labels[pos_inds]
             if self.vfl_iou_type == 'mask':
                 pos_mask_preds = mask_preds.detach()[mask_weights > 0]
@@ -629,7 +629,8 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
                         align_corners=False).squeeze(1)
 
                 cls_iou_targets[pos_inds, pos_labels] = mask_overlaps(
-                    pos_mask_preds, pos_mask_targets)
+                    pos_mask_preds,
+                    pos_mask_targets).type_as(cls_iou_targets)
             else:
                 pos_bbox_targets = bbox_targets[pos_inds]
                 pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
@@ -638,7 +639,7 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
                 cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
                     pos_decode_bbox_pred,
                     pos_decode_bbox_targets,
-                    is_aligned=True)
+                    is_aligned=True).type_as(cls_iou_targets)
 
             loss_cls = self.loss_cls(
                 cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
@@ -946,11 +947,11 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
         cls_avg_factor = max(cls_avg_factor, 1)
 
         if len(cls_scores) > 0:
-            if isinstance(self.loss_cls, RTDETRVarifocalLoss):
-                cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+            if isinstance(self.loss_cls, VarifocalLoss):
                 bg_class_ind = self.num_classes
                 pos_inds = ((labels >= 0)
                             & (labels < bg_class_ind)).nonzero().squeeze(1)
+                cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
                 pos_labels = labels[pos_inds]
                 if self.vfl_iou_type == 'mask':
                     pos_mask_preds = dn_mask_preds.detach()[mask_weights > 0]
@@ -972,7 +973,8 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
                             align_corners=False).squeeze(1)
 
                     cls_iou_targets[pos_inds, pos_labels] = mask_overlaps(
-                        pos_mask_preds, pos_mask_targets)
+                        pos_mask_preds,
+                        pos_mask_targets).type_as(cls_iou_targets)
                 else:
                     pos_bbox_targets = bbox_targets[pos_inds]
                     pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
@@ -981,7 +983,7 @@ class RTDETRInsHead(RTDETRInsHeadMixup, RTDETRHead):
                     cls_iou_targets[pos_inds, pos_labels] = bbox_overlaps(
                         pos_decode_bbox_pred,
                         pos_decode_bbox_targets,
-                        is_aligned=True)
+                        is_aligned=True).type_as(cls_iou_targets)
 
                 loss_cls = self.loss_cls(
                     cls_scores, cls_iou_targets, avg_factor=cls_avg_factor)
