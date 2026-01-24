@@ -20,7 +20,7 @@ Collections:
       Version: v3.3.0
 
 Models:
-  - Name: rtdetrv2_r18vd_8xb2-120e_coco.py
+  - Name: rtdetrv2_r18vd_8xb2-120e_coco
     In Collection: RT-DETR v2
     Config: configs/rtdetrv2/rtdetrv2_r18vd_8xb2-120e_coco.py
     Metadata:
@@ -32,7 +32,7 @@ Models:
           box AP: 48.1
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r18vd_8xb2-120e_coco_caff108e.pth
 
-  - Name: rtdetrv2_r34vd_8xb2-120e_coco.py
+  - Name: rtdetrv2_r34vd_8xb2-120e_coco
     In Collection: RT-DETR v2
     Config: configs/rtdetrv2/rtdetrv2_r34vd_8xb2-120e_coco.py
     Metadata:
@@ -44,7 +44,7 @@ Models:
           box AP: 49.9
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r34vd_8xb2-120e_coco_bfca80f4.pth
 
-  - Name: rtdetrv2_r50vd_m_8xb2-84e_coco.py
+  - Name: rtdetrv2_r50vd_m_8xb2-84e_coco
     In Collection: RT-DETR v2
     Config: configs/rtdetrv2/rtdetrv2_r50vd_m_8xb2-84e_coco.py
     Metadata:
@@ -56,7 +56,7 @@ Models:
           box AP: 52.0
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r50vd_m_8xb2-84e_coco_6592e764.pth
 
-  - Name: rtdetrv2_r50vd_8xb2-72e_coco.py
+  - Name: rtdetrv2_r50vd_8xb2-72e_coco
     In Collection: RT-DETR v2
     Config: configs/rtdetrv2/rtdetrv2_r50vd_8xb2-72e_coco.py
     Metadata:
@@ -68,7 +68,7 @@ Models:
           box AP: 53.4
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/rtdetrv2/rtdetrv2_r50vd_8xb2-72e_coco_4a8ad7df.pth
 
-  - Name: rtdetrv2_r101vd_8xb2-72e_coco.py
+  - Name: rtdetrv2_r101vd_8xb2-72e_coco
     In Collection: RT-DETR v2
     Config: configs/rtdetrv2/rtdetrv2_r101vd_8xb2-72e_coco.py
     Metadata:

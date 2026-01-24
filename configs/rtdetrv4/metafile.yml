@@ -12,11 +12,11 @@ Collections:
         - HGNetV2
         - Transformer
     Paper:
-      URL: https://arxiv.org/pdf/2510.25257
+      URL: https://arxiv.org/abs/2510.25257
       Title: 'RT-DETRv4: Painlessly Furthering Real-Time Object Detection with Vision Foundation Models'
     README: 
     Code:
-      URL: 
+      URL: https://github.com/flytocc/rtdetr-mmdet/blob/94411b13c39acc465958753e28593a64c61f675f/mmdet/models/detectors/rtdetrv4.py#L7
       Version: v3.3.0
 
 Models:
