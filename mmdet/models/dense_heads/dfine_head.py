@@ -523,7 +523,7 @@ class DFINEHead(RTDETRHead):
             bg_class_ind = self.num_classes
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
-            cls_iou_targets = cls_scores.new_zeros(cls_scores.shape)
+            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
             pos_bbox_targets = bbox_targets[pos_inds]
             pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
             pos_bbox_pred = bbox_preds.reshape(-1, 4)[pos_inds]
@@ -539,7 +539,7 @@ class DFINEHead(RTDETRHead):
             loss_cls = self.loss_cls(
                 cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
 
-        if num_queries not in self.cached_bbox_targets:
+        if num_queries not in self.cached_bbox_targets or not self.use_uni_set:
             if self.use_uni_set:
                 (bbox_targets_list, bbox_weights_list,
                  bbox_num_pos_list) = multi_apply(
@@ -558,12 +558,9 @@ class DFINEHead(RTDETRHead):
 
             # Compute the average number of gt boxes across all gpus, for
             # normalization purposes
-            if self.bg_cls_weight == 0:
-                bbox_avg_factor = cls_avg_factor
-            else:
-                bbox_avg_factor = bbox_preds.new_tensor([bbox_avg_factor])
-                bbox_avg_factor = torch.clamp(
-                    reduce_mean(bbox_avg_factor), min=1).item()
+            bbox_avg_factor = bbox_preds.new_tensor([num_total_bbox_pos])
+            bbox_avg_factor = torch.clamp(
+                reduce_mean(bbox_avg_factor), min=1).item()
 
             self.cached_bbox_targets[num_queries] = (bbox_targets,
                                                      bbox_weights,
@@ -600,19 +597,19 @@ class DFINEHead(RTDETRHead):
             bbox_preds, bbox_targets, bbox_weights, avg_factor=bbox_avg_factor)
 
         if bbox_corners is None:
-            return loss_cls, loss_bbox, loss_iou, None, None
-
-        with_fgl_loss = self.fgl_loss_weight is not None
-        with_dff_loss = self.loss_ld is not None and teacher is not None
-        if not with_fgl_loss and not with_dff_loss:
+            loss_fgl = loss_ddf = None
+            with_fgl_loss = with_dff_loss = False
+        else:
             loss_fgl = loss_ddf = bbox_corners.new_tensor(0)
-            return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
+            with_fgl_loss = self.fgl_loss_weight is not None
+            with_dff_loss = self.loss_ld is not None and teacher is not None
 
-        bbox_pos_inds = torch.nonzero(
-            bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
-        pos_ious = bbox_overlaps(
-            bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
-            is_aligned=True).detach()
+        if with_fgl_loss or with_dff_loss:
+            bbox_pos_inds = torch.nonzero(
+                bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
+            pos_ious = bbox_overlaps(
+                bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
+                is_aligned=True).detach()
 
         # distribution focal loss
         if with_fgl_loss:
@@ -634,8 +631,6 @@ class DFINEHead(RTDETRHead):
                 weight_left=weight_left,
                 weight=weight_targets,
                 avg_factor=bbox_avg_factor)
-        else:
-            loss_fgl = bbox_corners.new_tensor(0)
 
         # vari KnowledgeDistillationKLDivLoss
         if with_dff_loss:
@@ -666,8 +661,6 @@ class DFINEHead(RTDETRHead):
             loss_ddf = (loss_match_local1 * self.num_pos +
                         loss_match_local2 * self.num_neg) / (
                             self.num_pos + self.num_neg)
-        else:
-            loss_ddf = bbox_corners.new_tensor(0)
 
         return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
 
@@ -732,7 +725,7 @@ class DFINEHead(RTDETRHead):
                             dtype=torch.long,
                             device=device)
         labels[pos_inds] = gt_labels[pos_assigned_gt_inds]
-        label_weights = gt_labels.new_ones(num_queries)
+        label_weights = gt_bboxes.new_ones(num_queries)
 
         return (labels, label_weights, bbox_targets, bbox_weights,
                 pos_inds.numel())
@@ -859,7 +852,7 @@ class DFINEHead(RTDETRHead):
             if self.bg_cls_weight == 0:
                 bbox_avg_factor = cls_avg_factor
             else:
-                bbox_avg_factor = dn_bbox_preds.new_tensor([bbox_avg_factor])
+                bbox_avg_factor = dn_bbox_preds.new_tensor([num_total_pos])
                 bbox_avg_factor = torch.clamp(
                     reduce_mean(bbox_avg_factor), min=1).item()
 
@@ -878,7 +871,7 @@ class DFINEHead(RTDETRHead):
             bg_class_ind = self.num_classes
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
-            cls_iou_targets = cls_scores.new_zeros(cls_scores.shape)
+            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
             pos_bbox_targets = bbox_targets[pos_inds]
             pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
             pos_bbox_pred = dn_bbox_preds.reshape(-1, 4)[pos_inds]
@@ -920,19 +913,19 @@ class DFINEHead(RTDETRHead):
             bbox_preds, bbox_targets, bbox_weights, avg_factor=bbox_avg_factor)
 
         if dn_bbox_corners is None:
-            return loss_cls, loss_bbox, loss_iou, None, None
-
-        with_fgl_loss = self.fgl_loss_weight is not None
-        with_dff_loss = self.loss_ld is not None and teacher is not None
-        if not with_fgl_loss and not with_dff_loss:
+            loss_fgl = loss_ddf = None
+            with_fgl_loss = with_dff_loss = False
+        else:
             loss_fgl = loss_ddf = dn_bbox_corners.new_tensor(0)
-            return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
+            with_fgl_loss = self.fgl_loss_weight is not None
+            with_dff_loss = self.loss_ld is not None and teacher is not None
 
-        bbox_pos_inds = torch.nonzero(
-            bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
-        pos_ious = bbox_overlaps(
-            bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
-            is_aligned=True).detach()
+        if with_fgl_loss or with_dff_loss:
+            bbox_pos_inds = torch.nonzero(
+                bbox_weights.sum(-1) > 0, as_tuple=False).squeeze(-1).unique()
+            pos_ious = bbox_overlaps(
+                bboxes[bbox_pos_inds], bboxes_gt[bbox_pos_inds],
+                is_aligned=True).detach()
 
         # distribution focal loss
         if with_fgl_loss:
@@ -955,8 +948,6 @@ class DFINEHead(RTDETRHead):
                 weight_left=weight_left,
                 weight=weight_targets,
                 avg_factor=bbox_avg_factor)
-        else:
-            loss_fgl = dn_bbox_corners.new_tensor(0)
 
         # vari KnowledgeDistillationKLDivLoss
         if with_dff_loss:
@@ -985,8 +976,6 @@ class DFINEHead(RTDETRHead):
             loss_ddf = (loss_match_local1 * self.num_pos +
                         loss_match_local2 * self.num_neg) / (
                             self.num_pos + self.num_neg)
-        else:
-            loss_ddf = dn_bbox_corners.new_tensor(0)
 
         return loss_cls, loss_bbox, loss_iou, loss_fgl, loss_ddf
 
