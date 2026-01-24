@@ -116,6 +116,30 @@ Models:
           box AP: 57.8
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_dinov3_x_8xb4-58e_coco_061e5a6d.pth
 
+  - Name: deimv2_dinov3_vitb16_8xb4-48e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_dinov3_vitb16_8xb4-48e_coco.py
+    Metadata:
+      Epochs: 48
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 59.7
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_dinov3_vitb16_8xb4-48e_coco-a22c0aef.pth
+
+  - Name: deimv2_dinov3_vitl16_8xb2-36e_coco
+    In Collection: DEIM
+    Config: configs/deimv2/deimv2_dinov3_vitl16_8xb2-36e_coco.py
+    Metadata:
+      Epochs: 36
+    Results:
+      - Task: Object Detection
+        Dataset: COCO
+        Metrics:
+          box AP: 62.5
+    Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deimv2/deimv2_dinov3_vitl16_8xb2-36e_coco-c5da6da3.pth
+
   - Name: deimv2-ins_dinov3_x_8xb4-58e_coco
     In Collection: DEIM
     Config: configs/deimv2/deimv2-ins_dinov3_x_8xb4-58e_coco.py
