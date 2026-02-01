@@ -5,7 +5,7 @@ model = dict(
     type='DEIMDFINE',
     decoder=dict(
         ref_act_cfg=act_cfg,
-        # lqe_act_cfg=act_cfg,  # TODO SiLU in DEIM
+        lqe_act_cfg=act_cfg,
         layer_cfg=dict(ffn_cfg=dict(act_cfg=act_cfg))),
     bbox_head=dict(
         reg_act_cfg=act_cfg,

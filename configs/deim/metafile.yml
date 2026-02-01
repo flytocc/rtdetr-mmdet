@@ -29,7 +29,7 @@ Models:
       - Task: Object Detection
         Dataset: COCO
         Metrics:
-          box AP: 43.0
+          box AP: 43.1
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_n_8xb16-160e_coco_05240613.pth
 
   - Name: deim_hgnetv2_s_8xb4-132e_coco
@@ -41,7 +41,7 @@ Models:
       - Task: Object Detection
         Dataset: COCO
         Metrics:
-          box AP: 48.9
+          box AP: 49.0
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_s_8xb4-132e_coco_3223931d.pth
 
   - Name: deim_hgnetv2_m_8xb4-102e_coco
@@ -53,7 +53,7 @@ Models:
       - Task: Object Detection
         Dataset: COCO
         Metrics:
-          box AP: 52.6
+          box AP: 52.7
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_m_8xb4-102e_coco_9177d39b.pth
 
   - Name: deim_hgnetv2_l_8xb4-58e_coco
@@ -65,7 +65,7 @@ Models:
       - Task: Object Detection
         Dataset: COCO
         Metrics:
-          box AP: 54.7
+          box AP: 54.8
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_l_8xb4-58e_coco_a40a02d4.pth
 
   - Name: deim_hgnetv2_x_8xb4-58e_coco
@@ -77,7 +77,7 @@ Models:
       - Task: Object Detection
         Dataset: COCO
         Metrics:
-          box AP: 56.4
+          box AP: 56.5
     Weights: https://github.com/flytocc/rtdetr-mmdet/releases/download/deim/deim_hgnetv2_x_8xb4-58e_coco_6e117f09.pth
 
   - Name: deim_r18vd_8xb2-120e_coco
