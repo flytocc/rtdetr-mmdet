@@ -523,7 +523,7 @@ class DFINEHead(RTDETRHead):
             bg_class_ind = self.num_classes
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
-            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+            cls_iou_targets = cls_scores.new_zeros(cls_scores.shape)
             pos_bbox_targets = bbox_targets[pos_inds]
             pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
             pos_bbox_pred = bbox_preds.reshape(-1, 4)[pos_inds]
@@ -871,7 +871,7 @@ class DFINEHead(RTDETRHead):
             bg_class_ind = self.num_classes
             pos_inds = ((labels >= 0)
                         & (labels < bg_class_ind)).nonzero().squeeze(1)
-            cls_iou_targets = label_weights.new_zeros(cls_scores.shape)
+            cls_iou_targets = cls_scores.new_zeros(cls_scores.shape)
             pos_bbox_targets = bbox_targets[pos_inds]
             pos_decode_bbox_targets = bbox_cxcywh_to_xyxy(pos_bbox_targets)
             pos_bbox_pred = dn_bbox_preds.reshape(-1, 4)[pos_inds]
