@@ -16,7 +16,6 @@ val_dataloader = dict(
         data_prefix=dict(img='')))
 test_dataloader = val_dataloader
 
-# numpy < 1.24.0
 val_evaluator = dict(
     _delete_=True,
     type='LVISFixedAPMetric',

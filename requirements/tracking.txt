@@ -1,5 +1,6 @@
 mmpretrain
 motmetrics
-numpy<1.24.0
+trackeval @ git+https://github.com/flytocc/TrackEval.git
+numpy>=1.24
 scikit-learn
 seaborn

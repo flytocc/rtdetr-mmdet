@@ -22,6 +22,16 @@ from mmdet.structures.mask import encode_mask_results
 from ..functional import eval_recalls
 from .coco_metric import CocoMetric
 
+
+class _NumpyLegacyAliasCompat:
+    """Provide legacy aliases only inside third-party modules that need them."""
+
+    def __getattr__(self, name):
+        if name == 'float':
+            return float
+        return getattr(np, name)
+
+
 try:
     import lvis
 
@@ -30,6 +40,12 @@ try:
             'mmlvis is deprecated, please install official lvis-api by "pip install git+https://github.com/lvis-dataset/lvis-api.git"',  # noqa: E501
             UserWarning)
     from lvis import LVIS, LVISEval, LVISResults
+
+    # LVIS 0.5.x uses np.float in its evaluator, although NumPy removed that
+    # alias in 2.0. Keep the compatibility mapping local to its eval module.
+    if 'float' not in np.__dict__:
+        import lvis.eval as lvis_eval
+        lvis_eval.np = _NumpyLegacyAliasCompat()
 except ImportError:
     lvis = None
     LVISEval = None

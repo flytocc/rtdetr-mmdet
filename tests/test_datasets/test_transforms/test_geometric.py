@@ -394,7 +394,7 @@ class TestRotate(unittest.TestCase):
 
         # test clockwise rotation with angle 90, PolygonMasks
         results_rotated = transform(copy.deepcopy(self.results_poly))
-        gt_masks = [[np.array([0, 1, 0, 1, 0, 2], dtype=np.float)]]
+        gt_masks = [[np.array([0, 1, 0, 1, 0, 2], dtype=np.float64)]]
         results_gt['gt_masks'] = PolygonMasks(gt_masks, 3, 4)
         check_result_same(results_gt, results_rotated, self.check_keys)
 
@@ -427,7 +427,7 @@ class TestRotate(unittest.TestCase):
 
         # test counter-clockwise rotation with angle 90, PolygonMasks
         results_rotated = transform(copy.deepcopy(self.results_poly))
-        gt_masks = [[np.array([2, 0, 0, 0, 1, 0], dtype=np.float)]]
+        gt_masks = [[np.array([2, 0, 0, 0, 1, 0], dtype=np.float64)]]
         results_gt['gt_masks'] = PolygonMasks(gt_masks, 3, 4)
         check_result_same(results_gt, results_rotated, self.check_keys)
 

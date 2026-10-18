@@ -12,7 +12,7 @@ pip install emoji ddd-dataset
 pip install git+https://github.com/lvis-dataset/lvis-api.git"
 ```
 
-Please note that since the LVIS third-party library does not currently support numpy 1.24, ensure that your numpy version meets the requirements. It is recommended to install numpy version 1.23.
+The LVIS API uses a legacy NumPy type alias that was removed in NumPy 2. MMDetection provides a scoped compatibility adapter for this evaluator, so NumPy does not need to be downgraded for this example.
 
 ## Instructions
 
